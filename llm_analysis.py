@@ -458,3 +458,206 @@ Keep each section tight (roughly 2–6 sentences total per section unless Risks 
         return str(text).strip(), "openai"
     except Exception:
         return generate_rule_based_analysis(row, df), "rule_based"
+
+
+_SOLO_SECTIONS = """Use exactly these Markdown headings in this order:
+### Where you stand
+### Why your channel has upside
+### What's working
+### What to improve
+### Content moves this week
+### How you can earn
+### Your next steps"""
+
+_SOLO_SYSTEM_PROMPT = """You are a friendly creator coach who helps solo YouTube/TikTok creators earn more.
+Write in second person (you/your). Be concise, encouraging, and practical—no corporate or investor jargon.
+Output Markdown only—no preamble or sign-off."""
+
+
+def generate_solo_rule_memo(row: pd.Series, df: pd.DataFrame) -> str:
+    """Rule-based solo memo (second person). Same score logic as partner memo, different voice."""
+    niche = str(row.get("niche", "general")).strip() or "general"
+    followers = float(row["followers"])
+    avg_views = float(row["avg_views"])
+    growth = float(row["growth_30d"])
+    eng = float(row["engagement_rate"])
+    final_score = float(row["final_score"])
+    med_followers = float(df["followers"].median())
+    med_growth = float(df["growth_30d"].median())
+    med_eng = float(df["engagement_rate"].median())
+    med_final = float(df["final_score"].median())
+    g75 = float(df["growth_30d"].quantile(0.75))
+    growth_high = growth >= max(g75, med_growth)
+    growth_above_med = growth >= med_growth
+    gs = float(row["growth_score"])
+    es = float(row["engagement_score"])
+    g_tier = _score_tier(gs)
+    e_tier = _score_tier(es)
+
+    if gs > 80 and es > 80:
+        stand = (
+            f"**You’re in a strong pocket right now.** Your growth score ({gs:.1f}) and engagement score ({es:.1f}) are both high—"
+            "that usually means brands can trust your audience to react, not just scroll past."
+        )
+    elif (g_tier == "high" and e_tier == "medium") or (g_tier == "medium" and e_tier == "high"):
+        stand = (
+            f"**You’re close.** One of your scores is ahead of the other (growth {gs:.1f} vs engagement {es:.1f}—both matter). "
+            "Pick the weaker side and run 2–3 intentional posts there before chasing deals."
+        )
+    else:
+        stand = (
+            f"**No shame—numbers are just a map.** Your growth ({gs:.1f}) and engagement ({es:.1f}) scores suggest room to tighten hooks "
+            "or community before leaning on sponsorships. Small experiments beat guessing."
+        )
+
+    upside: list[str] = []
+    if final_score >= med_final:
+        upside.append(
+            f"Compared to others in this sample, your overall score ({final_score:.1f}) is **above the middle**—you’re not starting from zero."
+        )
+    if followers < med_followers and growth_above_med:
+        upside.append(
+            f"You’re still building your base, but your last-30-day growth ({_fmt_int(growth)}) is punching up—momentum matters for algorithms *and* pitches."
+        )
+    if eng > 0.1 or eng >= float(df["engagement_rate"].quantile(0.75)):
+        upside.append(f"People are tapping and commenting at **{eng:.3f}** reactions per view—that’s real signal, not empty reach.")
+    if not upside:
+        upside.append("There’s always one lever: clearer story in the first 2 seconds, or a format people can binge.")
+
+    working: list[str] = []
+    if growth_high:
+        working.append(f"**Growth:** net adds (~{_fmt_int(growth)}) are in a strong band for this file—keep posting what’s working.")
+    elif growth_above_med:
+        working.append("**Growth:** you’re not sliding backward—protect cadence while you test hooks.")
+    if avg_views >= float(df["avg_views"].median()):
+        working.append("**Views:** typical posts are meeting or beating the median in this sample—distribution isn’t broken.")
+    if not working:
+        working.append("Treat the next 5 posts as experiments: one clear promise in the title, one CTA in the caption.")
+
+    improve: list[str] = []
+    if eng < med_eng or eng < 0.05:
+        improve.append(
+            f"**Engagement:** replies and likes per view are softer than peers (you’re at {eng:.3f} vs ~{med_eng:.3f} median). Ask a question in the first 3 seconds."
+        )
+    if not growth_above_med:
+        improve.append("**Momentum:** push one repeatable series so viewers know why to come back next week.")
+    if not improve:
+        improve.append("Keep an eye on saves and watch time patterns—double down on what already gets saves.")
+
+    moves = [
+        f"Ship **two {niche}** posts this week with the same hook structure so viewers recognize your format.",
+        "Reply to the first 10 comments in 30 minutes—early replies train the algorithm *and* your community.",
+    ]
+    if eng < med_eng:
+        moves.insert(0, "End one video with “comment your biggest question”—then answer 3 in Stories or a follow-up clip.")
+
+    if followers >= 100_000:
+        earn = "**At your size**, integrated brand posts and longer ambassadorships are realistic if you can show saves and demographics."
+    elif followers >= 10_000:
+        earn = "**Affiliates, gifting, and small flat-fee collabs** are fair plays—lead with engagement screenshots, not follower count alone."
+    else:
+        earn = "**Start small:** digital product, tip jar, or niche affiliate. Prove one income line before stacking more."
+
+    if eng >= med_eng:
+        earn += " Your reactions per view help you argue for **performance bonuses** later."
+
+    next_steps = _recommended_actions_section(
+        verdict="Strong Candidate" if gs > 80 and es > 80 else ("Watchlist" if (g_tier == "high" and e_tier == "medium") or (g_tier == "medium" and e_tier == "high") else "Not Recommended"),
+        niche=niche,
+        followers=followers,
+        engagement_weak=eng < med_eng or eng < 0.05,
+    )
+    # Soften partner wording in Recommended Actions block for display — replace key phrases
+    next_steps_solo = next_steps.replace("Sign (proceed to diligence)", "Green light to reach out").replace(
+        "Monitor — do not sign yet", "Keep building—check back soon"
+    ).replace("Do not sign", "Hold off on big deals")
+
+    blocks = [
+        ("### Where you stand", stand),
+        ("### Why your channel has upside", "\n\n".join(upside)),
+        ("### What's working", "\n\n".join(working)),
+        ("### What to improve", "\n\n".join(improve)),
+        ("### Content moves this week", "\n\n".join(moves)),
+        ("### How you can earn", earn),
+        ("### Your next steps", next_steps_solo),
+    ]
+    out: list[str] = []
+    for h, b in blocks:
+        out.append(f"{h}\n\n{b}")
+    return "\n\n".join(out)
+
+
+def generate_solo_creator_analysis(
+    row: pd.Series, df: pd.DataFrame
+) -> tuple[str, Literal["openai", "rule_based"]]:
+    """
+    Solo-creator memo: OpenAI with coach voice when API key present; else `generate_solo_rule_memo`.
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return generate_solo_rule_memo(row, df), "rule_based"
+
+    creator = _row_dict_for_prompt(row)
+    cohort_cols = [
+        c
+        for c in (
+            "username",
+            "niche",
+            "followers",
+            "avg_views",
+            "avg_likes",
+            "avg_comments",
+            "growth_30d",
+            "engagement_rate",
+            "reach_score",
+            "engagement_score",
+            "growth_score",
+            "final_score",
+            "rank",
+        )
+        if c in df.columns
+    ]
+    cohort_json = json.dumps(df[cohort_cols].to_dict(orient="records"), indent=2, default=str)
+
+    user_prompt = f"""You help ONE solo creator understand their monetization potential from sample metrics.
+
+**This creator (JSON):**
+```json
+{json.dumps(creator, indent=2)}
+```
+
+**Others in the same sample file (for context only — don’t shame, compare constructively):**
+```json
+{cohort_json}
+```
+
+{_SOLO_SECTIONS}
+
+In **Where you stand**, give a short honest snapshot (2–4 sentences) using growth_score and engagement_score:
+- both >80: celebrate and say they’re in a strong position to monetize thoughtfully
+- one high one medium: name the gap and reassure
+- else: frame as room to grow, not failure
+
+Keep each section short. No phrases like "diligence", "pipeline", "underwriting", or "MCN."
+
+"""
+
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=api_key)
+        resp = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": _SOLO_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.4,
+            max_tokens=2200,
+        )
+        text = resp.choices[0].message.content
+        if not text or not str(text).strip():
+            return generate_solo_rule_memo(row, df), "rule_based"
+        return str(text).strip(), "openai"
+    except Exception:
+        return generate_solo_rule_memo(row, df), "rule_based"
