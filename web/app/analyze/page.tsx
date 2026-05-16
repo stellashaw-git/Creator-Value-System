@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import { ReportCard } from "@/components/report-card";
 import { AgentThinking } from "@/components/agent-thinking";
 import { ScreenshotUpload } from "@/components/screenshot-upload";
@@ -39,17 +38,6 @@ const DEMO: AnalyzeInput = {
 type Stage = "form" | "loading" | "result";
 
 export default function AnalyzePage() {
-  return (
-    <Suspense fallback={null}>
-      <AnalyzePageInner />
-    </Suspense>
-  );
-}
-
-function AnalyzePageInner() {
-  const search = useSearchParams();
-  const useDemo = search.get("demo") === "1";
-
   const [stage, setStage] = useState<Stage>("form");
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
@@ -66,7 +54,9 @@ function AnalyzePageInner() {
   const [comments, setComments] = useState("");
 
   useEffect(() => {
-    if (useDemo) {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("demo") === "1") {
       setName(DEMO.name);
       setPlatform(DEMO.platform);
       setNiche(DEMO.niche);
@@ -77,7 +67,7 @@ function AnalyzePageInner() {
       setBrandCategory(DEMO.brandCategory || "");
       setComments(DEMO.comments.join("\n"));
     }
-  }, [useDemo]);
+  }, []);
 
   /**
    * Pre-fill the form from a screenshot extraction. We do NOT auto-submit —
