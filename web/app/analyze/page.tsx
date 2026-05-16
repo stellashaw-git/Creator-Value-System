@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ReportCard } from "@/components/report-card";
 import { AgentThinking } from "@/components/agent-thinking";
@@ -39,6 +39,14 @@ const DEMO: AnalyzeInput = {
 type Stage = "form" | "loading" | "result";
 
 export default function AnalyzePage() {
+  return (
+    <Suspense fallback={null}>
+      <AnalyzePageInner />
+    </Suspense>
+  );
+}
+
+function AnalyzePageInner() {
   const search = useSearchParams();
   const useDemo = search.get("demo") === "1";
 
