@@ -12,7 +12,8 @@ real signal-to-outcome moat over time.
 ```
 /                Landing — Creator Intelligence Platform positioning
 /analyze         Step 1: Upload creator screenshots (or fill manually)
-                 Step 2: Review the extracted profile → Run the evaluation
+                 Step 2: Review metrics (avg likes & comments from last 30 days,
+                        optional followers ~30 days ago) → Evaluate a Creator
                  6-step thinking sequence → Creator Opportunity Brief
 /dataset         History + stats — every evaluation auto-saved
 /dataset/[id]    Detail + Campaign Outcome update form
@@ -61,7 +62,17 @@ With the key, both flows call `gpt-4o-mini`. Screenshot extraction uses Vision w
 
 ### Try the sample creator
 
-`/analyze?demo=1` — pre-fills the form with a sample (Maya Ortega · fitness · 82K · 4.6% ER · +11% 30d growth · supplements category). Click **Evaluate a Creator →** to see the entire pipeline.
+`/analyze?demo=1` — pre-fills **Maya Ortega** (fitness · Instagram · 82.4K followers · supplements).
+Metrics use **avg likes + avg comments** from a **last-30-days** style baseline (demo values: 3,000 likes · 790 comments), so **engagement rate** is auto-calculated as `(likes + comments) / followers` (~4.6%).
+**30-day growth** is derived from optional **followers ~30 days ago** (demo back-solves ~+11%). Click **Evaluate a Creator →** to run the full pipeline.
+
+If likes/comments or historical followers are missing, the UI shows **Not enough data** / **Unknown** for those readouts; scoring falls back to neutral reach- and growth proxies so the brief still completes.
+
+### Metrics inputs (manual or post-screenshot)
+
+- **Engagement rate** — read-only; computed from avg likes, avg comments, and current followers (use averages from posts in the **last 30 days**).
+- **30-day growth** — read-only; computed when **followers ~30 days ago** is provided; otherwise shown as Unknown and not heavily penalized in the pillar blend.
+- Screenshot extraction maps **`likes`** and **`comments_count`** into those avg fields when present.
 
 ## Deploy to Vercel
 

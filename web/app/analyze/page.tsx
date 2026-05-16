@@ -23,8 +23,9 @@ const DEMO: AnalyzeInput = {
   niche: "Fitness",
   followers: 82_400,
   avgViews: 24_500,
-  engagementRate: 0.046,
-  growthRate30d: 0.11,
+  averageLikes: 3000,
+  averageComments: 790,
+  followers30DaysAgo: 74234,
   brandCategory: "supplements",
   comments: [
     "where did you get this?", "link pls 🙏", "so pretty 😍",
@@ -37,6 +38,28 @@ const DEMO: AnalyzeInput = {
 
 type Stage = "form" | "loading" | "result";
 
+function engagementDisplayPct(
+  followers: number | "",
+  avgLikes: number | "",
+  avgComments: number | ""
+): string {
+  const f = Number(followers);
+  if (followers === "" || !Number.isFinite(f) || f <= 0) return "Not enough data";
+  if (avgLikes === "" || avgComments === "") return "Not enough data";
+  const L = Number(avgLikes);
+  const C = Number(avgComments);
+  if (!Number.isFinite(L) || !Number.isFinite(C)) return "Not enough data";
+  return `${(((L + C) / f) * 100).toFixed(2)}%`;
+}
+
+function growthDisplayPct(followers: number | "", followers30: number | ""): string {
+  if (followers === "" || followers30 === "") return "Unknown";
+  const f = Number(followers);
+  const f0 = Number(followers30);
+  if (!Number.isFinite(f) || !Number.isFinite(f0) || f0 <= 0) return "Unknown";
+  return `${(((f - f0) / f0) * 100).toFixed(2)}%`;
+}
+
 export default function AnalyzePage() {
   const [stage, setStage] = useState<Stage>("form");
   const [error, setError] = useState<string | null>(null);
@@ -48,8 +71,9 @@ export default function AnalyzePage() {
   const [niche, setNiche] = useState<Niche>("Beauty");
   const [followers, setFollowers] = useState<number | "">("");
   const [avgViews, setAvgViews] = useState<number | "">("");
-  const [engagementRate, setEngagementRate] = useState<number | "">("");
-  const [growthRate30d, setGrowthRate30d] = useState<number | "">("");
+  const [averageLikes, setAverageLikes] = useState<number | "">("");
+  const [averageComments, setAverageComments] = useState<number | "">("");
+  const [followers30DaysAgo, setFollowers30DaysAgo] = useState<number | "">("");
   const [brandCategory, setBrandCategory] = useState("");
   const [comments, setComments] = useState("");
 
@@ -62,8 +86,9 @@ export default function AnalyzePage() {
       setNiche(DEMO.niche);
       setFollowers(DEMO.followers);
       setAvgViews(DEMO.avgViews);
-      setEngagementRate(DEMO.engagementRate * 100);
-      setGrowthRate30d(DEMO.growthRate30d * 100);
+      if (DEMO.averageLikes !== undefined) setAverageLikes(DEMO.averageLikes);
+      if (DEMO.averageComments !== undefined) setAverageComments(DEMO.averageComments);
+      if (DEMO.followers30DaysAgo !== undefined) setFollowers30DaysAgo(DEMO.followers30DaysAgo);
       setBrandCategory(DEMO.brandCategory || "");
       setComments(DEMO.comments.join("\n"));
     }
@@ -87,11 +112,22 @@ export default function AnalyzePage() {
     if (typeof data.average_views === "number" && data.average_views > 0) {
       setAvgViews(data.average_views);
     }
-    if (typeof data.engagement_rate === "number") {
-      setEngagementRate(data.engagement_rate);
+    if (typeof data.likes === "number" && data.likes >= 0) {
+      setAverageLikes(data.likes);
     }
-    if (typeof data.growth_30d === "number") {
-      setGrowthRate30d(data.growth_30d);
+    if (typeof data.comments_count === "number" && data.comments_count >= 0) {
+      setAverageComments(data.comments_count);
+    }
+    if (typeof data.growth_30d === "number" && Number.isFinite(data.growth_30d)) {
+      const fNow =
+        typeof data.followers === "number" && data.followers > 0 ? data.followers : 0;
+      if (fNow > 0) {
+        const raw = data.growth_30d;
+        const gDec = Math.abs(raw) <= 1 ? raw : raw / 100;
+        if (Number.isFinite(gDec) && gDec > -0.99) {
+          setFollowers30DaysAgo(Math.round(fNow / (1 + gDec)));
+        }
+      }
     }
     const merged = [
       ...data.purchase_intent_comments,
@@ -125,8 +161,9 @@ export default function AnalyzePage() {
       niche,
       followers: Number(followers),
       avgViews: Number(avgViews) || 0,
-      engagementRate: Number(engagementRate) / 100 || 0,
-      growthRate30d: Number(growthRate30d) / 100 || 0,
+      averageLikes: averageLikes === "" ? undefined : Number(averageLikes),
+      averageComments: averageComments === "" ? undefined : Number(averageComments),
+      followers30DaysAgo: followers30DaysAgo === "" ? undefined : Number(followers30DaysAgo),
       brandCategory: brandCategory.trim() || undefined,
       comments: comments
         .split(/\r?\n/)
@@ -194,12 +231,13 @@ export default function AnalyzePage() {
 
       <div className="mx-auto max-w-6xl px-6 py-10">
         {stage === "form" && (
-          <FormView
+            <FormView
             {...{
               name, setName, platform, setPlatform, niche, setNiche,
               followers, setFollowers, avgViews, setAvgViews,
-              engagementRate, setEngagementRate,
-              growthRate30d, setGrowthRate30d,
+              averageLikes, setAverageLikes,
+              averageComments, setAverageComments,
+              followers30DaysAgo, setFollowers30DaysAgo,
               brandCategory, setBrandCategory, comments, setComments,
               error, onSubmit: runAnalysis, onExtracted,
             }}
@@ -229,10 +267,12 @@ interface FormProps {
   setFollowers: (v: number | "") => void;
   avgViews: number | "";
   setAvgViews: (v: number | "") => void;
-  engagementRate: number | "";
-  setEngagementRate: (v: number | "") => void;
-  growthRate30d: number | "";
-  setGrowthRate30d: (v: number | "") => void;
+  averageLikes: number | "";
+  setAverageLikes: (v: number | "") => void;
+  averageComments: number | "";
+  setAverageComments: (v: number | "") => void;
+  followers30DaysAgo: number | "";
+  setFollowers30DaysAgo: (v: number | "") => void;
   brandCategory: string;
   setBrandCategory: (v: string) => void;
   comments: string;
@@ -328,6 +368,9 @@ function FormView(p: FormProps) {
 
         <div className="card">
           <h2 className="section-title">Audience metrics</h2>
+          <p className="mt-2 text-xs text-neutral-600">
+            More complete data → more accurate evaluation
+          </p>
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <label className="label">Followers *</label>
@@ -355,33 +398,75 @@ function FormView(p: FormProps) {
                 }
               />
             </div>
+            <div className="sm:col-span-2">
+              <div className="flex flex-wrap gap-3">
+                <div className="min-w-[7rem] flex-1">
+                  <label className="label text-xs">Avg likes (per post)</label>
+                  <input
+                    className="input text-sm"
+                    type="number"
+                    min={0}
+                    step={50}
+                    placeholder="e.g. 3000"
+                    value={p.averageLikes}
+                    onChange={(e) =>
+                      p.setAverageLikes(e.target.value === "" ? "" : Number(e.target.value))
+                    }
+                  />
+                </div>
+                <div className="min-w-[7rem] flex-1">
+                  <label className="label text-xs">Avg comments (per post)</label>
+                  <input
+                    className="input text-sm"
+                    type="number"
+                    min={0}
+                    step={10}
+                    placeholder="e.g. 790"
+                    value={p.averageComments}
+                    onChange={(e) =>
+                      p.setAverageComments(e.target.value === "" ? "" : Number(e.target.value))
+                    }
+                  />
+                </div>
+              </div>
+              <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
+                Use averages from posts in the <span className="font-medium text-neutral-700">last 30 days</span> so
+                the numbers reflect current cadence, not lifetime or one-off viral spikes.
+              </p>
+            </div>
             <div>
               <label className="label">Engagement rate (%)</label>
               <input
-                className="input"
-                type="number"
-                min={0}
-                max={100}
-                step={0.1}
-                placeholder="e.g. 4.6"
-                value={p.engagementRate}
-                onChange={(e) =>
-                  p.setEngagementRate(e.target.value === "" ? "" : Number(e.target.value))
-                }
+                className="input cursor-not-allowed bg-neutral-50 text-neutral-800"
+                readOnly
+                value={engagementDisplayPct(p.followers, p.averageLikes, p.averageComments)}
               />
+              <p className="mt-1 text-[11px] text-neutral-500">
+                Auto-calculated from likes, comments, and followers
+              </p>
             </div>
             <div>
               <label className="label">30-day growth (%)</label>
               <input
+                className="input cursor-not-allowed bg-neutral-50 text-neutral-800"
+                readOnly
+                value={growthDisplayPct(p.followers, p.followers30DaysAgo)}
+              />
+              <p className="mt-1 text-[11px] text-neutral-500">
+                Optional — only if historical data is available
+              </p>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="label">Followers ~30 days ago (optional)</label>
+              <input
                 className="input"
                 type="number"
-                min={-100}
-                max={500}
-                step={0.1}
-                placeholder="e.g. 11"
-                value={p.growthRate30d}
+                min={0}
+                step={500}
+                placeholder="e.g. prior month follower count"
+                value={p.followers30DaysAgo}
                 onChange={(e) =>
-                  p.setGrowthRate30d(e.target.value === "" ? "" : Number(e.target.value))
+                  p.setFollowers30DaysAgo(e.target.value === "" ? "" : Number(e.target.value))
                 }
               />
             </div>

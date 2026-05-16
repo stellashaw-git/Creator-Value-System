@@ -82,6 +82,36 @@ function commentIntentAnalysis(comments: string[]): CommentIntent {
   return { total, purchasePct: p, curiosityPct: c, passivePct: pa, interpretation };
 }
 
+export function isEngagementKnown(input: AnalyzeInput): boolean {
+  return (
+    typeof input.engagementRate === "number" &&
+    Number.isFinite(input.engagementRate) &&
+    input.engagementRate >= 0
+  );
+}
+
+export function isGrowthKnown(input: AnalyzeInput): boolean {
+  return typeof input.growthRate30d === "number" && Number.isFinite(input.growthRate30d);
+}
+
+function impliedEngagementRate(avgViews: number, followers: number): number {
+  const vtr = followers > 0 ? avgViews / followers : 0;
+  return Math.min(0.08, Math.max(0.025, vtr * 0.055));
+}
+
+function scoringEngagementRate(input: AnalyzeInput): number {
+  if (isEngagementKnown(input)) return Math.min(1, Math.max(0, input.engagementRate!));
+  return impliedEngagementRate(input.avgViews, input.followers);
+}
+
+/** Neutral ~8.5% 30d growth when history is missing — avoids heavy penalty. */
+const NEUTRAL_GROWTH_EFFECT = 0.085;
+
+function scoringGrowthRate(input: AnalyzeInput): number {
+  if (isGrowthKnown(input)) return Math.max(-1, Math.min(5, input.growthRate30d!));
+  return NEUTRAL_GROWTH_EFFECT;
+}
+
 // ---------- 1–4. Pillar scores (0–100) ----------
 
 function engagementScore(er: number, avgViews: number, followers: number): number {
@@ -126,14 +156,39 @@ function monetizationVerdict(overall: number, intent: number, reach: number): Se
   return { label: "Low", detail: "Neither reach nor intent is strong enough to justify paid placements yet." };
 }
 
-function growthSignal(growth: number, rate: number): SectionLine<Quality> {
+function growthSignal(growth: number, rate: number | undefined): SectionLine<Quality> {
+  if (rate === undefined || !Number.isFinite(rate)) {
+    return {
+      label: "Moderate",
+      detail:
+        "30-day follower growth was not provided — growth pillar uses a neutral baseline so the overall score is not skewed.",
+    };
+  }
   if (growth >= 75) return { label: "Strong", detail: `+${Math.round(rate * 100)}% in 30 days — clear upward momentum.` };
   if (growth >= 45) return { label: "Moderate", detail: `+${Math.round(rate * 100)}% in 30 days — steady, not breakout.` };
   return { label: "Weak", detail: `+${Math.round(rate * 100)}% in 30 days — momentum has stalled.` };
 }
 
-function engagementQuality(engagement: number, er: number): SectionLine<Quality> {
-  const erPct = (er * 100).toFixed(1);
+function engagementQuality(engagement: number, knownEr: number | undefined, proxyEr: number): SectionLine<Quality> {
+  const erPct = ((knownEr !== undefined ? knownEr : proxyEr) * 100).toFixed(1);
+  if (knownEr === undefined) {
+    if (engagement >= 70) {
+      return {
+        label: "Strong",
+        detail: `Likes and comments per follower were not provided together — a reach-based proxy (~${erPct}% equivalent ER) keeps scoring grounded.`,
+      };
+    }
+    if (engagement >= 40) {
+      return {
+        label: "Average",
+        detail: `Likes and comments per follower were not provided together — a reach-based proxy (~${erPct}% equivalent ER) keeps scoring grounded.`,
+      };
+    }
+    return {
+      label: "Weak",
+      detail: `Likes and comments per follower were not provided together — a reach-based proxy (~${erPct}% equivalent ER) keeps scoring grounded.`,
+    };
+  }
   if (engagement >= 70) return { label: "Strong", detail: `${erPct}% ER — audience is actively responding, not just watching.` };
   if (engagement >= 40) return { label: "Average", detail: `${erPct}% ER — engagement is in the normal band for this tier.` };
   return { label: "Weak", detail: `${erPct}% ER — interactions are well below what brands expect at this scale.` };
@@ -281,17 +336,19 @@ function buildMemo(report: {
     ? `${(input.followers / 1_000_000).toFixed(1)}M`
     : `${Math.round(input.followers / 1000)}K`;
 
-  const erPct = (input.engagementRate * 100).toFixed(1);
-  const growthPct = Math.round(input.growthRate30d * 100);
+  const erPct = isEngagementKnown(input)
+    ? `${(input.engagementRate! * 100).toFixed(1)}%`
+    : "limited engagement inputs (likes + comments per follower not provided together)";
+  const growthPct = isGrowthKnown(input) ? `${Math.round(input.growthRate30d! * 100)}%` : "unknown";
 
   // Executive summary
   let executiveSummary: string;
   if (decision === "Strong Candidate") {
-    executiveSummary = `${input.name} is a ${followersK}-follower ${input.niche.toLowerCase()} creator on ${input.platform} with ${erPct}% engagement and +${growthPct}% 30-day growth. Pillar scores converge on commercial readiness — this is a sign-now profile, not a watchlist.`;
+    executiveSummary = `${input.name} is a ${followersK}-follower ${input.niche.toLowerCase()} creator on ${input.platform} with ${erPct} engagement signal and ${growthPct === "unknown" ? "unstated 30-day growth" : "+" + growthPct + " 30-day growth"}. Pillar scores converge on commercial readiness — this is a sign-now profile, not a watchlist.`;
   } else if (decision === "Watchlist") {
-    executiveSummary = `${input.name} is a ${followersK}-follower ${input.niche.toLowerCase()} creator on ${input.platform} with ${erPct}% engagement and +${growthPct}% 30-day growth. Signal is mixed — one or two pillars are working, but commercial conversion isn't proven yet.`;
+    executiveSummary = `${input.name} is a ${followersK}-follower ${input.niche.toLowerCase()} creator on ${input.platform} with ${erPct} engagement signal and ${growthPct === "unknown" ? "unstated 30-day growth" : "+" + growthPct + " 30-day growth"}. Signal is mixed — one or two pillars are working, but commercial conversion isn't proven yet.`;
   } else {
-    executiveSummary = `${input.name} is a ${followersK}-follower ${input.niche.toLowerCase()} creator on ${input.platform} with ${erPct}% engagement. Pillar scores are weak across reach, intent, or growth — partnership economics don't pencil out at current signal.`;
+    executiveSummary = `${input.name} is a ${followersK}-follower ${input.niche.toLowerCase()} creator on ${input.platform} with ${erPct} engagement signal. Pillar scores are weak across reach, intent, or growth — partnership economics don't pencil out at current signal.`;
   }
 
   // Why this creator matters
@@ -305,8 +362,12 @@ function buildMemo(report: {
   // Commercial upside
   const upsideDrivers: string[] = [];
   if (pillars.intent >= 60) upsideDrivers.push(`${commentIntent.purchasePct}% of comments already carry purchase language`);
-  if (pillars.engagement >= 60) upsideDrivers.push(`${erPct}% engagement materially exceeds the tier baseline`);
-  if (pillars.growth >= 60) upsideDrivers.push(`+${growthPct}% 30-day growth widens the audience ceiling fast`);
+  if (pillars.engagement >= 60 && isEngagementKnown(input)) {
+    upsideDrivers.push(`${erPct} engagement materially exceeds the tier baseline`);
+  }
+  if (pillars.growth >= 60 && isGrowthKnown(input)) {
+    upsideDrivers.push(`+${growthPct} 30-day growth widens the audience ceiling fast`);
+  }
   if (brandFitScore >= 60) upsideDrivers.push(`${brandFitScore}/100 brand-fit score signals a natural commercial alignment`);
   const commercialUpside = upsideDrivers.length > 0
     ? `The commercial upside concentrates in ${upsideDrivers.length} dimension${upsideDrivers.length > 1 ? "s" : ""}: ${upsideDrivers.join("; ")}. Together, these are the levers brands price into deal value.`
@@ -367,7 +428,10 @@ function buildOutreach(input: AnalyzeInput, decision: Decision): OutreachMessage
   const followersK = input.followers >= 1_000_000
     ? `${(input.followers / 1_000_000).toFixed(1)}M`
     : `${Math.round(input.followers / 1000)}K`;
-  const erPct = (input.engagementRate * 100).toFixed(1);
+  const erPct = (scoringEngagementRate(input) * 100).toFixed(1);
+  const growthSnippet = isGrowthKnown(input)
+    ? `+${Math.round(input.growthRate30d! * 100)}% in 30 days`
+    : "steady audience build at your current tier";
   const category = input.brandCategory || `${input.niche}-adjacent`;
 
   const brand = `Hi ${name},
@@ -382,7 +446,7 @@ Open to a 15-minute intro this week?
 
   const mcn = `Hi ${name},
 
-Quick note from [MCN Name]. Your trajectory in ${niche} (${followersK} followers, +${Math.round(input.growthRate30d * 100)}% in 30 days) puts you in the bracket we typically sign for representation.
+Quick note from [MCN Name]. Your trajectory in ${niche} (${followersK} followers, ${growthSnippet}) puts you in the bracket we typically sign for representation.
 
 What we offer: pre-vetted brand deals, rate-card upgrades, contract review, and access to our talent network. We earn only when you do — no upfront commitments.
 
@@ -484,9 +548,11 @@ function buildNextActions(decision: Decision, growth: number, intent: number, ha
 
 export function buildReport(input: AnalyzeInput, mode: "openai" | "rule_based" = "rule_based"): Report {
   const commentIntent = commentIntentAnalysis(input.comments);
-  const engagement = engagementScore(input.engagementRate, input.avgViews, input.followers);
+  const erS = scoringEngagementRate(input);
+  const grS = scoringGrowthRate(input);
+  const engagement = engagementScore(erS, input.avgViews, input.followers);
   const reach = reachScore(input.followers, input.avgViews);
-  const growth = growthScore(input.growthRate30d);
+  const growth = growthScore(grS);
   const intent = intentScore(commentIntent);
 
   const overallScore = Math.round(
@@ -494,8 +560,12 @@ export function buildReport(input: AnalyzeInput, mode: "openai" | "rule_based" =
   );
 
   const monetization = monetizationVerdict(overallScore, intent, reach);
-  const growthSec = growthSignal(growth, input.growthRate30d);
-  const engagementSec = engagementQuality(engagement, input.engagementRate);
+  const growthSec = growthSignal(growth, isGrowthKnown(input) ? input.growthRate30d : undefined);
+  const engagementSec = engagementQuality(
+    engagement,
+    isEngagementKnown(input) ? input.engagementRate : undefined,
+    erS
+  );
   const gap = trafficVsMonetizationGap(reach, intent);
   const fit = brandFit(input.niche, intent, reach, input.brandCategory);
   const { decision, rationale } = finalDecision(overallScore, engagement, growth, intent);

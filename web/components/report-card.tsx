@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Report } from "@/lib/types";
+import { isEngagementKnown, isGrowthKnown } from "@/lib/scoring";
 import { Badge, toneFor } from "./score-badge";
 import { DecisionBanner } from "./decision-banner";
 import { OutreachPanel } from "./outreach-panel";
@@ -43,13 +44,15 @@ function Snapshot({ report }: { report: Report }) {
     {
       label: "Growth signal",
       value: report.growth.label,
-      sub: `+${Math.round(input.growthRate30d * 100)}% / 30d`,
+      sub: isGrowthKnown(input)
+        ? `+${Math.round(input.growthRate30d! * 100)}% / 30d`
+        : "Unknown",
       tone: toneFor(report.growth.label),
     },
     {
       label: "Engagement",
       value: report.engagement.label,
-      sub: pct(input.engagementRate),
+      sub: isEngagementKnown(input) ? pct(input.engagementRate!) : "Not enough data",
       tone: toneFor(report.engagement.label),
     },
     {

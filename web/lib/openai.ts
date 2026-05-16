@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { NextAction, Report } from "./types";
+import { isEngagementKnown, isGrowthKnown } from "./scoring";
 
 const SYSTEM =
   "You are the evaluation engine of WorthyIQ — a Creator Intelligence Platform used by brands running " +
@@ -43,8 +44,16 @@ PROFILE
 - Niche: ${i.niche}
 - Followers: ${i.followers.toLocaleString()}
 - Avg views: ${i.avgViews.toLocaleString()}
-- Engagement rate: ${(i.engagementRate * 100).toFixed(1)}%
-- 30-day growth: ${(i.growthRate30d * 100).toFixed(1)}%
+- Engagement rate: ${
+    isEngagementKnown(i)
+      ? `${(i.engagementRate! * 100).toFixed(1)}%`
+      : "not auto-calculated (avg likes + avg comments with followers required)"
+  }
+- 30-day growth: ${
+    isGrowthKnown(i)
+      ? `${(i.growthRate30d! * 100).toFixed(1)}%`
+      : "unknown (followers ~30 days ago optional field not provided)"
+  }
 - Brand category (optional): ${i.brandCategory || "—"}
 
 PILLAR SCORES (0–100)

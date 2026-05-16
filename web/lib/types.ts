@@ -34,8 +34,15 @@ export interface AnalyzeInput {
   niche: Niche;
   followers: number;
   avgViews: number;
-  engagementRate: number;
-  growthRate30d: number;
+  /** 0–1 when computed from (averageLikes + averageComments) / followers, or legacy body. Omitted = unknown / not enough data. */
+  engagementRate?: number;
+  /** Decimal change vs followers 30d ago, e.g. 0.11 = +11%. Omitted = unknown. */
+  growthRate30d?: number;
+  /** Optional inputs used to derive engagementRate. */
+  averageLikes?: number;
+  averageComments?: number;
+  /** Optional; with current followers yields growthRate30d. */
+  followers30DaysAgo?: number;
   comments: string[];
   brandCategory?: string;
 }

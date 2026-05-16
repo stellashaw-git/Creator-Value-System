@@ -24,16 +24,54 @@ function parseInput(raw: unknown): AnalyzeInput {
     return n;
   };
 
+  const optionalNonneg = (v: unknown): number | undefined => {
+    if (v === undefined || v === null || v === "") return undefined;
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(n) || n < 0) return undefined;
+    return n;
+  };
+
   const name = String(b.name ?? "").trim() || "Unnamed Creator";
   const platform = String(b.platform ?? "Instagram") as Platform;
   if (!PLATFORMS.includes(platform)) throw new Error("Invalid platform.");
   const niche = String(b.niche ?? "Other") as Niche;
   if (!NICHES.includes(niche)) throw new Error("Invalid niche.");
 
-  const followers = num(b.followers, "followers", 0, 5e9);
+  const followers = num(b.followers, "followers", 1, 5e9);
   const avgViews = num(b.avgViews ?? 0, "avgViews", 0, 5e9);
-  const engagementRate = num(b.engagementRate ?? 0, "engagementRate", 0, 1);
-  const growthRate30d = num(b.growthRate30d ?? 0, "growthRate30d", -1, 5);
+
+  const averageLikes = optionalNonneg(b.averageLikes);
+  const averageComments = optionalNonneg(b.averageComments);
+  const followers30DaysAgo = optionalNonneg(b.followers30DaysAgo);
+
+  let engagementRate: number | undefined;
+  if (
+    averageLikes !== undefined &&
+    averageComments !== undefined &&
+    followers > 0
+  ) {
+    engagementRate = Math.min(1, (averageLikes + averageComments) / followers);
+  } else {
+    const raw = b.engagementRate;
+    if (raw !== undefined && raw !== null && raw !== "") {
+      const er0 = typeof raw === "number" ? raw : Number(raw);
+      if (Number.isFinite(er0) && er0 >= 0 && er0 <= 1) engagementRate = er0;
+    }
+  }
+
+  let growthRate30d: number | undefined;
+  if (followers30DaysAgo !== undefined && followers30DaysAgo > 0) {
+    growthRate30d = (followers - followers30DaysAgo) / followers30DaysAgo;
+    if (!Number.isFinite(growthRate30d) || growthRate30d < -1 || growthRate30d > 5) {
+      growthRate30d = undefined;
+    }
+  } else {
+    const rawG = b.growthRate30d;
+    if (rawG !== undefined && rawG !== null && rawG !== "") {
+      const g = typeof rawG === "number" ? rawG : Number(rawG);
+      if (Number.isFinite(g) && g >= -1 && g <= 5) growthRate30d = g;
+    }
+  }
 
   const commentsRaw = b.comments;
   const comments: string[] = Array.isArray(commentsRaw)
@@ -46,8 +84,18 @@ function parseInput(raw: unknown): AnalyzeInput {
       : undefined;
 
   return {
-    name, platform, niche, followers, avgViews,
-    engagementRate, growthRate30d, comments, brandCategory,
+    name,
+    platform,
+    niche,
+    followers,
+    avgViews,
+    engagementRate,
+    growthRate30d,
+    averageLikes,
+    averageComments,
+    followers30DaysAgo,
+    comments,
+    brandCategory,
   };
 }
 
