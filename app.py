@@ -886,6 +886,117 @@ def _rule_based_strategist(snapshot: dict[str, Any]) -> dict[str, str]:
     return {"insight": insight, "gap": gap, "next_move": move}
 
 
+# ---------- Screenshot extraction (vision model) ----------
+
+EXTRACTION_PROMPT = """You are an Instagram screenshot reader. The user has uploaded 1–3 screenshots from their Instagram account: a profile screenshot (required), a recent post or reel screenshot (required), and optionally a comments screenshot.
+
+Read every visible piece of information you can extract with high confidence. Return valid JSON ONLY. No prose. No markdown. No code fences.
+
+Schema:
+{
+  "username":          string | null,
+  "followers":         integer | null,
+  "avg_likes":         integer | null,
+  "avg_views":         integer | null,
+  "caption":           string | null,
+  "comments":          [string, ...],
+  "niche":             "Beauty" | "Fitness" | "Lifestyle" | "Other",
+  "content_type_hint": "Aesthetic" | "Mixed" | "Decision-driven"
+}
+
+Rules:
+- Convert short-form numbers: "12.4K" -> 12400, "1.2M" -> 1200000.
+- For comments, extract only the comment text. Drop usernames, timestamps, "Reply", like-counts, and any UI chrome.
+- Skip ads, navigation, and your own model output.
+- Niche inference (visual cues):
+    cosmetics / skincare / makeup -> Beauty
+    gym / workout / running / yoga -> Fitness
+    food / travel / home / outfits -> Lifestyle
+    otherwise -> Other
+- content_type_hint:
+    Aesthetic       = pure visual, no decision context
+    Mixed           = some commentary alongside visuals
+    Decision-driven = comparisons, recommendations, "why I chose"
+- If a field is not visible, set it to null. Empty array for comments.
+"""
+
+
+def _encode_image(uploaded_file) -> str:
+    """Streamlit UploadedFile -> base64 data URL for the OpenAI vision API."""
+    import base64
+    raw = uploaded_file.getvalue()
+    b64 = base64.b64encode(raw).decode()
+    mime = uploaded_file.type or "image/jpeg"
+    return f"data:{mime};base64,{b64}"
+
+
+def extract_from_screenshots(
+    profile_img,
+    post_img,
+    comments_img=None,
+) -> dict[str, Any]:
+    """
+    Send screenshots to a vision-capable model and parse the structured response.
+    Returns {"error": str|None, "data": dict|None}.
+    """
+    import json
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return {
+            "error": "OPENAI_API_KEY not set — set it in your environment to use Quick Analysis.",
+            "data": None,
+        }
+
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        model = os.getenv("OPENAI_VISION_MODEL", "gpt-4o-mini")
+
+        content_blocks: list[dict[str, Any]] = [
+            {"type": "text", "text": EXTRACTION_PROMPT}
+        ]
+        for label, img in [
+            ("profile", profile_img),
+            ("post", post_img),
+            ("comments", comments_img),
+        ]:
+            if img is None:
+                continue
+            content_blocks.append({"type": "text", "text": f"--- {label} screenshot ---"})
+            content_blocks.append(
+                {"type": "image_url", "image_url": {"url": _encode_image(img)}}
+            )
+
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": content_blocks}],
+            temperature=0.1,
+            max_tokens=900,
+            response_format={"type": "json_object"},
+        )
+        text = resp.choices[0].message.content or "{}"
+        data = json.loads(text)
+
+        # Coerce / sanitize
+        clean = {
+            "username": (data.get("username") or "").strip() or None,
+            "followers": int(data["followers"]) if data.get("followers") else None,
+            "avg_likes": int(data["avg_likes"]) if data.get("avg_likes") else None,
+            "avg_views": int(data["avg_views"]) if data.get("avg_views") else None,
+            "caption": (data.get("caption") or "").strip() or None,
+            "comments": [c.strip() for c in (data.get("comments") or []) if isinstance(c, str) and c.strip()],
+            "niche": data.get("niche") if data.get("niche") in {"Beauty", "Fitness", "Lifestyle", "Other"} else "Other",
+            "content_type_hint": data.get("content_type_hint")
+                if data.get("content_type_hint") in {"Aesthetic", "Mixed", "Decision-driven"}
+                else None,
+        }
+        return {"error": None, "data": clean}
+
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}", "data": None}
+
+
 def strategist_output(snapshot: dict[str, Any]) -> tuple[dict[str, str], str]:
     """
     Returns ({insight, gap, next_move}, mode) where mode is 'openai' or 'rule_based'.
@@ -912,6 +1023,93 @@ def strategist_output(snapshot: dict[str, Any]) -> tuple[dict[str, str], str]:
         except Exception:
             pass  # fall through to rule-based
     return _rule_based_strategist(snapshot), "rule_based"
+
+
+# ---------- Analysis pipeline (shared by both input modes) ----------
+
+def run_analysis_and_route(
+    *,
+    niche: str,
+    followers: int,
+    avg_views: int,
+    comments_paste: str,
+    links: list[str],
+    username: str = "you",
+    source: str = "manual",
+) -> None:
+    """
+    Run the full scoring + strategist pipeline, then transition to the results stage.
+    Used by both Quick Analysis (screenshot) and Manual Input flows.
+    """
+    cohort = load_niche_df(niche)
+    user_dict = build_user_row(followers, avg_views, niche, cohort)
+    row, scored_df = score_user_in_cohort(user_dict, cohort)
+
+    comments = split_pasted_comments(comments_paste)
+    cls = classify_bucket(comments)
+
+    comment_ai = analyze_comments_structured(
+        comments=comments,
+        niche=niche,
+        creator_username=username or "you",
+    )
+
+    structure = content_structure_breakdown(cls)
+    intent_level = intent_label_from_cls(cls, comment_ai)
+    content_type = content_type_from_structure(structure)
+
+    sc = simple_score(intent_level, content_type)
+    final_score = sc["final"]
+    intent_numeric = float(sc["intent"])
+    structure_numeric = float(sc["content"])
+
+    deal = deal_reality(row, intent_numeric, structure, followers)
+    market = market_benchmark(niche, deal["followers_used"])
+    gap_market = market_gap(deal, market, intent_numeric, structure_numeric)
+    tier_key, tier_label = _follower_tier(deal["followers_used"])
+
+    snapshot = {
+        "niche": niche,
+        "followers": int(deal["followers_used"]),
+        "tier": tier_label,
+        "intent_level": intent_level,
+        "content_type": content_type,
+        "score": final_score,
+        "deal_low": deal["low"],
+        "deal_high": deal["high"],
+        "mkt_low": market["low"],
+        "mkt_high": market["high"],
+        "position": gap_market["status"],
+    }
+    strategist, strategist_mode = strategist_output(snapshot)
+
+    st.session_state.diagnosis = {
+        "links": links,
+        "niche": niche,
+        "username": username,
+        "source": source,
+        "inputs": {"followers": followers, "avg_views": avg_views},
+        "row_series": row,
+        "scored_df": scored_df,
+        "cls": cls,
+        "comment_ai": comment_ai,
+        "structure": structure,
+        "tier_key": tier_key,
+        "tier_label": tier_label,
+        "followers_used": int(deal["followers_used"]),
+        "followers_provided": deal["provided"],
+        "intent_level": intent_level,
+        "content_type": content_type,
+        "score": final_score,
+        "intent_value": sc["intent"],
+        "content_value": sc["content"],
+        "deal": deal,
+        "market": market,
+        "gap_market": gap_market,
+        "strategist": strategist,
+        "strategist_mode": strategist_mode,
+    }
+    st.session_state.stage = STAGE_RESULTS
 
 
 # ---------- Session ----------
@@ -958,145 +1156,210 @@ if st.session_state.stage == STAGE_LANDING:
     with col2:
         st.info(
             "**We don’t need full account access.**\n\n"
-            "You’ll just paste **3 recent Instagram post or reel links** "
-            "(plus a few audience comments if you have them).\n\n"
-            "Takes 2 minutes."
+            "Choose either:\n"
+            "- ⚡ **Quick Analysis** — upload 2–3 screenshots, we read them for you\n"
+            "- ✏️ **Manual input** — paste links + comments yourself\n\n"
+            "Takes under 2 minutes."
         )
 
 # ---------- Form ----------
 elif st.session_state.stage == STAGE_FORM:
-    st.markdown("## Paste your recent content")
-    st.markdown(
-        "We don’t need full account access. "
-        "Just paste **3 recent Instagram post or reel links** to understand your monetization signals."
-    )
+    st.markdown("## Tell us about your account")
     st.caption(
-        "We only need a few recent posts to understand your buying signals, content structure, and monetization gaps."
+        "Two ways to do this — upload a few screenshots (fastest) "
+        "or fill in the fields manually."
     )
 
-    with st.form("diagnosis_form", clear_on_submit=False):
-        st.markdown("#### Required")
-        link1 = st.text_input("Post link 1", placeholder="https://www.instagram.com/p/...")
-        link2 = st.text_input("Post link 2", placeholder="https://www.instagram.com/reel/...")
-        link3 = st.text_input("Post link 3", placeholder="https://www.instagram.com/p/...")
+    mode = st.radio(
+        "Input method",
+        ["⚡ Quick Analysis (recommended)", "✏️ Manual input"],
+        horizontal=True,
+        key="input_mode",
+    )
 
-        st.markdown("#### Optional — sharpens the read")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            followers = st.number_input(
-                "Follower count", min_value=0, value=0, step=500, format="%d"
-            )
-        with c2:
-            avg_views = st.number_input(
-                "Average views", min_value=0, value=0, step=250, format="%d"
-            )
-        with c3:
-            niche = st.selectbox(
-                "Niche / category",
-                options=["Beauty", "Fitness", "Lifestyle", "Other"],
-                index=0,
-            )
+    NICHE_OPTIONS = ["Beauty", "Fitness", "Lifestyle", "Other"]
 
-        st.markdown("#### Paste recent comments (optional but recommended)")
-        comments_paste = st.text_area(
-            "One comment per line",
-            height=160,
-            placeholder="where did you get this?\nlink pls 🙏\nso pretty 😍\n...",
-            help="We classify each into Purchase Intent / Curiosity / Passive to read real buying signal.",
+    # Reset extraction state if user flips mode
+    if "extracted" not in st.session_state:
+        st.session_state.extracted = None
+
+    # =========================================================================
+    # ⚡ QUICK ANALYSIS — screenshot upload + vision extraction
+    # =========================================================================
+    if mode.startswith("⚡"):
+        st.markdown(
+            "Upload **2–3 screenshots** from your Instagram. "
+            "We'll read them, fill the fields for you, and let you adjust before analyzing."
         )
 
-        submitted = st.form_submit_button("Run monetization diagnosis", type="primary")
+        with st.form("screenshot_form", clear_on_submit=False):
+            su1, su2, su3 = st.columns(3)
+            with su1:
+                profile_img = st.file_uploader(
+                    "Profile screenshot *",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key="ss_profile",
+                    help="The screen showing your @ handle and follower count.",
+                )
+            with su2:
+                post_img = st.file_uploader(
+                    "Post / reel screenshot *",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key="ss_post",
+                    help="One recent post or reel (with caption + likes/views visible).",
+                )
+            with su3:
+                comments_img = st.file_uploader(
+                    "Comments screenshot",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key="ss_comments",
+                    help="Optional but sharpens the read. Screenshot the comments panel.",
+                )
 
+            extract_clicked = st.form_submit_button(
+                "Extract from screenshots", type="primary"
+            )
+
+        if extract_clicked:
+            if not profile_img or not post_img:
+                st.error(
+                    "Please upload at least the **profile** and **post** screenshots."
+                )
+            else:
+                with st.spinner("Reading your screenshots…"):
+                    result = extract_from_screenshots(profile_img, post_img, comments_img)
+                if result["error"]:
+                    st.error(f"Extraction failed: {result['error']}")
+                    st.info("Switch to **✏️ Manual input** above to continue.")
+                else:
+                    st.session_state.extracted = result["data"]
+                    st.success("Extraction complete. Review the fields below.")
+
+        # --- Step 2: editable preview (only if we have extracted data) ---
+        if st.session_state.extracted:
+            data = st.session_state.extracted
+            st.markdown("---")
+            st.markdown("#### Review & adjust before analyzing")
+            st.caption(
+                "Fix anything the model misread. Empty fields are fine — we'll use cohort defaults."
+            )
+
+            with st.form("extracted_review_form", clear_on_submit=False):
+                r1, r2 = st.columns(2)
+                with r1:
+                    e_username = st.text_input(
+                        "Username", value=data.get("username") or "", placeholder="@yourhandle"
+                    )
+                    e_niche_default = data.get("niche") if data.get("niche") in NICHE_OPTIONS else "Other"
+                    e_niche = st.selectbox(
+                        "Niche", options=NICHE_OPTIONS, index=NICHE_OPTIONS.index(e_niche_default)
+                    )
+                with r2:
+                    e_followers = st.number_input(
+                        "Followers",
+                        min_value=0,
+                        value=int(data.get("followers") or 0),
+                        step=500,
+                        format="%d",
+                    )
+                    e_avg_views = st.number_input(
+                        "Avg views (use likes if not a reel)",
+                        min_value=0,
+                        value=int(data.get("avg_views") or data.get("avg_likes") or 0),
+                        step=250,
+                        format="%d",
+                    )
+
+                e_caption = st.text_area(
+                    "Caption (read from your post)",
+                    value=data.get("caption") or "",
+                    height=80,
+                    help="Used as soft context only — doesn't affect scoring directly.",
+                )
+
+                extracted_comments = data.get("comments") or []
+                e_comments = st.text_area(
+                    f"Comments — one per line ({len(extracted_comments)} read)",
+                    value="\n".join(extracted_comments),
+                    height=180,
+                    help="We classify each into Purchase Intent / Curiosity / Passive.",
+                )
+
+                run_clicked = st.form_submit_button("Run Analysis", type="primary")
+
+            if run_clicked:
+                run_analysis_and_route(
+                    niche=e_niche,
+                    followers=int(e_followers),
+                    avg_views=int(e_avg_views),
+                    comments_paste=e_comments,
+                    links=["screenshot:profile", "screenshot:post"]
+                    + (["screenshot:comments"] if comments_img else []),
+                    username=(e_username or "you").lstrip("@"),
+                    source="screenshot",
+                )
+                st.rerun()
+
+    # =========================================================================
+    # ✏️ MANUAL INPUT — original flow
+    # =========================================================================
+    else:
+        st.caption(
+            "Paste 3 recent Instagram post or reel links (and a few comments if you have them)."
+        )
+
+        with st.form("diagnosis_form", clear_on_submit=False):
+            st.markdown("#### Required")
+            link1 = st.text_input("Post link 1", placeholder="https://www.instagram.com/p/...")
+            link2 = st.text_input("Post link 2", placeholder="https://www.instagram.com/reel/...")
+            link3 = st.text_input("Post link 3", placeholder="https://www.instagram.com/p/...")
+
+            st.markdown("#### Optional — sharpens the read")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                followers = st.number_input(
+                    "Follower count", min_value=0, value=0, step=500, format="%d"
+                )
+            with c2:
+                avg_views = st.number_input(
+                    "Average views", min_value=0, value=0, step=250, format="%d"
+                )
+            with c3:
+                niche = st.selectbox(
+                    "Niche / category", options=NICHE_OPTIONS, index=0
+                )
+
+            st.markdown("#### Paste recent comments (optional but recommended)")
+            comments_paste = st.text_area(
+                "One comment per line",
+                height=160,
+                placeholder="where did you get this?\nlink pls 🙏\nso pretty 😍\n...",
+            )
+
+            submitted = st.form_submit_button("Run Analysis", type="primary")
+
+        if submitted:
+            links = [l.strip() for l in (link1, link2, link3) if l and l.strip()]
+            if len(links) < 3:
+                st.error("Please paste **3 post/reel links** so we can anchor the diagnosis.")
+            else:
+                run_analysis_and_route(
+                    niche=niche,
+                    followers=int(followers),
+                    avg_views=int(avg_views),
+                    comments_paste=comments_paste,
+                    links=links,
+                    username="you",
+                    source="manual",
+                )
+                st.rerun()
+
+    # ----- Back button (shared) -----
     colb, _ = st.columns([1, 3])
     with colb:
         if st.button("← Back"):
             st.session_state.stage = STAGE_LANDING
-            st.rerun()
-
-    if submitted:
-        links = [l.strip() for l in (link1, link2, link3) if l and l.strip()]
-        if len(links) < 3:
-            st.error("Please paste **3 post/reel links** so we can anchor the diagnosis.")
-        else:
-            cohort = load_niche_df(niche)
-            user_dict = build_user_row(followers, avg_views, niche, cohort)
-            row, scored_df = score_user_in_cohort(user_dict, cohort)
-
-            comments = split_pasted_comments(comments_paste)
-            cls = classify_bucket(comments)
-
-            comment_ai = analyze_comments_structured(
-                comments=comments,
-                niche=niche,
-                creator_username="you",
-            )
-
-            # 📡 SIGNALS — discrete labels derived from the classifier + structure model
-            structure = content_structure_breakdown(cls)
-            intent_level = intent_label_from_cls(cls, comment_ai)
-            content_type = content_type_from_structure(structure)
-
-            # 🧮 EVALUATION — simplified Creator Value Analyzer scoring
-            sc = simple_score(intent_level, content_type)
-            final_score = sc["final"]
-
-            # 💰 VALUE — deal_reality + market benchmark + position
-            # (reuse existing helpers; pass numeric intent/structure derived from the labels)
-            intent_numeric = float(sc["intent"])
-            structure_numeric = float(sc["content"])
-            deal = deal_reality(row, intent_numeric, structure, followers)
-            market = market_benchmark(niche, deal["followers_used"])
-            gap_market = market_gap(deal, market, intent_numeric, structure_numeric)
-
-            # 👤 PROFILE — tier label from follower count actually used
-            tier_key, tier_label = _follower_tier(deal["followers_used"])
-
-            # 🎯 ACTION — strategist AI (OpenAI or rule-based fallback)
-            snapshot = {
-                "niche": niche,
-                "followers": int(deal["followers_used"]),
-                "tier": tier_label,
-                "intent_level": intent_level,
-                "content_type": content_type,
-                "score": final_score,
-                "deal_low": deal["low"],
-                "deal_high": deal["high"],
-                "mkt_low": market["low"],
-                "mkt_high": market["high"],
-                "position": gap_market["status"],
-            }
-            strategist, strategist_mode = strategist_output(snapshot)
-
-            st.session_state.diagnosis = {
-                "links": links,
-                "niche": niche,
-                "inputs": {"followers": followers, "avg_views": avg_views},
-                "row_series": row,
-                "scored_df": scored_df,
-                "cls": cls,
-                "comment_ai": comment_ai,
-                "structure": structure,
-                # Profile
-                "tier_key": tier_key,
-                "tier_label": tier_label,
-                "followers_used": int(deal["followers_used"]),
-                "followers_provided": deal["provided"],
-                # Signals
-                "intent_level": intent_level,
-                "content_type": content_type,
-                # Evaluation
-                "score": final_score,
-                "intent_value": sc["intent"],
-                "content_value": sc["content"],
-                # Value
-                "deal": deal,
-                "market": market,
-                "gap_market": gap_market,
-                # Action
-                "strategist": strategist,
-                "strategist_mode": strategist_mode,
-            }
-            st.session_state.stage = STAGE_RESULTS
+            st.session_state.extracted = None
             st.rerun()
 
 # ---------- Results ----------
