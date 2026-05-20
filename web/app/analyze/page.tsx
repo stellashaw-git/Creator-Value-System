@@ -7,7 +7,15 @@ import { AgentThinking } from "@/components/agent-thinking";
 import { ScreenshotUpload } from "@/components/screenshot-upload";
 import { saveEvaluation } from "@/lib/dataset";
 import type { ExtractedSignals } from "@/lib/extract";
+import { parseNonNegativeNumber } from "@/lib/parse-numeric-input";
 import type { AnalyzeInput, Niche, Platform, Report } from "@/lib/types";
+
+type NumField =
+  | "followers"
+  | "avgViews"
+  | "averageLikes"
+  | "averageComments"
+  | "followers30DaysAgo";
 
 const PLATFORMS: Platform[] = [
   "Instagram", "TikTok", "YouTube", "X / Twitter", "Xiaohongshu / RED", "Other",
@@ -39,25 +47,25 @@ const DEMO: AnalyzeInput = {
 type Stage = "form" | "loading" | "result";
 
 function engagementDisplayPct(
-  followers: number | "",
-  avgLikes: number | "",
-  avgComments: number | ""
+  followers: string,
+  avgLikes: string,
+  avgComments: string
 ): string {
-  const f = Number(followers);
-  if (followers === "" || !Number.isFinite(f) || f <= 0) return "Not enough data";
-  if (avgLikes === "" || avgComments === "") return "Not enough data";
-  const L = Number(avgLikes);
-  const C = Number(avgComments);
-  if (!Number.isFinite(L) || !Number.isFinite(C)) return "Not enough data";
-  return `${(((L + C) / f) * 100).toFixed(2)}%`;
+  const f = parseNonNegativeNumber(followers);
+  if (!f.ok || f.value <= 0) return "Not enough data";
+  const L = parseNonNegativeNumber(avgLikes);
+  const C = parseNonNegativeNumber(avgComments);
+  if (!L.ok || !C.ok) return "Not enough data";
+  return `${(((L.value + C.value) / f.value) * 100).toFixed(2)}%`;
 }
 
-function growthDisplayPct(followers: number | "", followers30: number | ""): string {
-  if (followers === "" || followers30 === "") return "Unknown";
-  const f = Number(followers);
-  const f0 = Number(followers30);
-  if (!Number.isFinite(f) || !Number.isFinite(f0) || f0 <= 0) return "Unknown";
-  return `${(((f - f0) / f0) * 100).toFixed(2)}%`;
+function growthDisplayPct(followers: string, followers30: string): string {
+  if (!followers.trim() || !followers30.trim()) return "Unknown";
+  const f = parseNonNegativeNumber(followers);
+  const f0 = parseNonNegativeNumber(followers30);
+  if (!f.ok || f.value <= 0 || !f0.ok) return "Unknown";
+  if (f0.value <= 0) return "Unknown";
+  return `${(((f.value - f0.value) / f0.value) * 100).toFixed(2)}%`;
 }
 
 export default function AnalyzePage() {
@@ -69,13 +77,48 @@ export default function AnalyzePage() {
   const [name, setName] = useState("");
   const [platform, setPlatform] = useState<Platform>("Instagram");
   const [niche, setNiche] = useState<Niche>("Beauty");
-  const [followers, setFollowers] = useState<number | "">("");
-  const [avgViews, setAvgViews] = useState<number | "">("");
-  const [averageLikes, setAverageLikes] = useState<number | "">("");
-  const [averageComments, setAverageComments] = useState<number | "">("");
-  const [followers30DaysAgo, setFollowers30DaysAgo] = useState<number | "">("");
+  const [followers, setFollowers] = useState("");
+  const [avgViews, setAvgViews] = useState("");
+  const [averageLikes, setAverageLikes] = useState("");
+  const [averageComments, setAverageComments] = useState("");
+  const [followers30DaysAgo, setFollowers30DaysAgo] = useState("");
   const [brandCategory, setBrandCategory] = useState("");
   const [comments, setComments] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<NumField, string>>>({});
+
+  const clearFieldError = (key: NumField) => {
+    setFieldErrors((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const handleNumericBlur = (key: NumField, raw: string) => {
+    const r = parseNonNegativeNumber(raw);
+    const set =
+      key === "followers"
+        ? setFollowers
+        : key === "avgViews"
+          ? setAvgViews
+          : key === "averageLikes"
+            ? setAverageLikes
+            : key === "averageComments"
+              ? setAverageComments
+              : setFollowers30DaysAgo;
+
+    if (r.ok) {
+      set(String(r.value));
+      clearFieldError(key);
+      return;
+    }
+    if (r.empty) {
+      clearFieldError(key);
+      return;
+    }
+    setFieldErrors((prev) => ({ ...prev, [key]: "Enter a valid value" }));
+  };
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -84,13 +127,16 @@ export default function AnalyzePage() {
       setName(DEMO.name);
       setPlatform(DEMO.platform);
       setNiche(DEMO.niche);
-      setFollowers(DEMO.followers);
-      setAvgViews(DEMO.avgViews);
-      if (DEMO.averageLikes !== undefined) setAverageLikes(DEMO.averageLikes);
-      if (DEMO.averageComments !== undefined) setAverageComments(DEMO.averageComments);
-      if (DEMO.followers30DaysAgo !== undefined) setFollowers30DaysAgo(DEMO.followers30DaysAgo);
+      setFollowers(String(DEMO.followers));
+      setAvgViews(String(DEMO.avgViews));
+      if (DEMO.averageLikes !== undefined) setAverageLikes(String(DEMO.averageLikes));
+      if (DEMO.averageComments !== undefined) setAverageComments(String(DEMO.averageComments));
+      if (DEMO.followers30DaysAgo !== undefined) {
+        setFollowers30DaysAgo(String(DEMO.followers30DaysAgo));
+      }
       setBrandCategory(DEMO.brandCategory || "");
       setComments(DEMO.comments.join("\n"));
+      setFieldErrors({});
     }
   }, []);
 
@@ -107,16 +153,16 @@ export default function AnalyzePage() {
       setNiche(data.niche as Niche);
     }
     if (typeof data.followers === "number" && data.followers > 0) {
-      setFollowers(data.followers);
+      setFollowers(String(data.followers));
     }
     if (typeof data.average_views === "number" && data.average_views > 0) {
-      setAvgViews(data.average_views);
+      setAvgViews(String(data.average_views));
     }
     if (typeof data.likes === "number" && data.likes >= 0) {
-      setAverageLikes(data.likes);
+      setAverageLikes(String(data.likes));
     }
     if (typeof data.comments_count === "number" && data.comments_count >= 0) {
-      setAverageComments(data.comments_count);
+      setAverageComments(String(data.comments_count));
     }
     if (typeof data.growth_30d === "number" && Number.isFinite(data.growth_30d)) {
       const fNow =
@@ -125,7 +171,7 @@ export default function AnalyzePage() {
         const raw = data.growth_30d;
         const gDec = Math.abs(raw) <= 1 ? raw : raw / 100;
         if (Number.isFinite(gDec) && gDec > -0.99) {
-          setFollowers30DaysAgo(Math.round(fNow / (1 + gDec)));
+          setFollowers30DaysAgo(String(Math.round(fNow / (1 + gDec))));
         }
       }
     }
@@ -148,10 +194,63 @@ export default function AnalyzePage() {
 
   const runAnalysis = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFieldErrors({});
     setError(null);
     if (!name.trim()) return setError("Creator name is required.");
-    if (!followers || Number(followers) <= 0)
+
+    const fr = parseNonNegativeNumber(followers);
+    if (!fr.ok) {
+      setFieldErrors({ followers: "Enter a valid value" });
+      return setError("Followers: Enter a valid value");
+    }
+    if (fr.value <= 0) {
+      setFieldErrors({ followers: "Followers must be greater than 0." });
       return setError("Followers must be greater than 0.");
+    }
+
+    let avgViewsNum = 0;
+    if (avgViews.trim() !== "") {
+      const vr = parseNonNegativeNumber(avgViews);
+      if (!vr.ok) {
+        setFieldErrors({ avgViews: "Enter a valid value" });
+        return setError("Average views: Enter a valid value");
+      }
+      avgViewsNum = vr.value;
+    }
+
+    let averageLikesNum: number | undefined;
+    if (averageLikes.trim() !== "") {
+      const lr = parseNonNegativeNumber(averageLikes);
+      if (!lr.ok) {
+        setFieldErrors({ averageLikes: "Enter a valid value" });
+        return setError("Avg likes: Enter a valid value");
+      }
+      averageLikesNum = lr.value;
+    }
+
+    let averageCommentsNum: number | undefined;
+    if (averageComments.trim() !== "") {
+      const cr = parseNonNegativeNumber(averageComments);
+      if (!cr.ok) {
+        setFieldErrors({ averageComments: "Enter a valid value" });
+        return setError("Avg comments: Enter a valid value");
+      }
+      averageCommentsNum = cr.value;
+    }
+
+    let followers30Num: number | undefined;
+    if (followers30DaysAgo.trim() !== "") {
+      const pr = parseNonNegativeNumber(followers30DaysAgo);
+      if (!pr.ok) {
+        setFieldErrors({ followers30DaysAgo: "Enter a valid value" });
+        return setError("Followers ~30 days ago: Enter a valid value (must be greater than 0).");
+      }
+      if (pr.value <= 0) {
+        setFieldErrors({ followers30DaysAgo: "Enter a valid value" });
+        return setError("Followers ~30 days ago: Enter a valid value (must be greater than 0).");
+      }
+      followers30Num = pr.value;
+    }
 
     setStage("loading");
 
@@ -159,11 +258,11 @@ export default function AnalyzePage() {
       name: name.trim(),
       platform,
       niche,
-      followers: Number(followers),
-      avgViews: Number(avgViews) || 0,
-      averageLikes: averageLikes === "" ? undefined : Number(averageLikes),
-      averageComments: averageComments === "" ? undefined : Number(averageComments),
-      followers30DaysAgo: followers30DaysAgo === "" ? undefined : Number(followers30DaysAgo),
+      followers: fr.value,
+      avgViews: avgViewsNum,
+      averageLikes: averageLikesNum,
+      averageComments: averageCommentsNum,
+      followers30DaysAgo: followers30Num,
       brandCategory: brandCategory.trim() || undefined,
       comments: comments
         .split(/\r?\n/)
@@ -202,6 +301,7 @@ export default function AnalyzePage() {
     setStage("form");
     setReport(null);
     setSavedId(null);
+    setFieldErrors({});
   };
 
   return (
@@ -239,7 +339,12 @@ export default function AnalyzePage() {
               averageComments, setAverageComments,
               followers30DaysAgo, setFollowers30DaysAgo,
               brandCategory, setBrandCategory, comments, setComments,
-              error, onSubmit: runAnalysis, onExtracted,
+              fieldErrors,
+              onNumericBlur: handleNumericBlur,
+              onNumericFocus: clearFieldError,
+              error,
+              onSubmit: runAnalysis,
+              onExtracted,
             }}
           />
         )}
@@ -263,20 +368,23 @@ interface FormProps {
   setPlatform: (v: Platform) => void;
   niche: Niche;
   setNiche: (v: Niche) => void;
-  followers: number | "";
-  setFollowers: (v: number | "") => void;
-  avgViews: number | "";
-  setAvgViews: (v: number | "") => void;
-  averageLikes: number | "";
-  setAverageLikes: (v: number | "") => void;
-  averageComments: number | "";
-  setAverageComments: (v: number | "") => void;
-  followers30DaysAgo: number | "";
-  setFollowers30DaysAgo: (v: number | "") => void;
+  followers: string;
+  setFollowers: (v: string) => void;
+  avgViews: string;
+  setAvgViews: (v: string) => void;
+  averageLikes: string;
+  setAverageLikes: (v: string) => void;
+  averageComments: string;
+  setAverageComments: (v: string) => void;
+  followers30DaysAgo: string;
+  setFollowers30DaysAgo: (v: string) => void;
   brandCategory: string;
   setBrandCategory: (v: string) => void;
   comments: string;
   setComments: (v: string) => void;
+  fieldErrors: Partial<Record<NumField, string>>;
+  onNumericBlur: (key: NumField, raw: string) => void;
+  onNumericFocus: (key: NumField) => void;
   error: string | null;
   onSubmit: (e: React.FormEvent) => void;
   onExtracted: (data: ExtractedSignals) => void;
@@ -376,27 +484,33 @@ function FormView(p: FormProps) {
               <label className="label">Followers *</label>
               <input
                 className="input"
-                type="number"
-                min={0}
-                step={500}
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
                 value={p.followers}
-                onChange={(e) =>
-                  p.setFollowers(e.target.value === "" ? "" : Number(e.target.value))
-                }
+                onChange={(e) => p.setFollowers(e.target.value)}
+                onBlur={() => p.onNumericBlur("followers", p.followers)}
+                onFocus={() => p.onNumericFocus("followers")}
               />
+              {p.fieldErrors.followers && (
+                <p className="mt-1 text-xs text-rose-600">{p.fieldErrors.followers}</p>
+              )}
             </div>
             <div>
               <label className="label">Average views</label>
               <input
                 className="input"
-                type="number"
-                min={0}
-                step={250}
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
                 value={p.avgViews}
-                onChange={(e) =>
-                  p.setAvgViews(e.target.value === "" ? "" : Number(e.target.value))
-                }
+                onChange={(e) => p.setAvgViews(e.target.value)}
+                onBlur={() => p.onNumericBlur("avgViews", p.avgViews)}
+                onFocus={() => p.onNumericFocus("avgViews")}
               />
+              {p.fieldErrors.avgViews && (
+                <p className="mt-1 text-xs text-rose-600">{p.fieldErrors.avgViews}</p>
+              )}
             </div>
             <div className="sm:col-span-2">
               <div className="flex flex-wrap gap-3">
@@ -404,29 +518,35 @@ function FormView(p: FormProps) {
                   <label className="label text-xs">Avg likes (per post)</label>
                   <input
                     className="input text-sm"
-                    type="number"
-                    min={0}
-                    step={50}
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
                     placeholder="e.g. 3000"
                     value={p.averageLikes}
-                    onChange={(e) =>
-                      p.setAverageLikes(e.target.value === "" ? "" : Number(e.target.value))
-                    }
+                    onChange={(e) => p.setAverageLikes(e.target.value)}
+                    onBlur={() => p.onNumericBlur("averageLikes", p.averageLikes)}
+                    onFocus={() => p.onNumericFocus("averageLikes")}
                   />
+                  {p.fieldErrors.averageLikes && (
+                    <p className="mt-1 text-xs text-rose-600">{p.fieldErrors.averageLikes}</p>
+                  )}
                 </div>
                 <div className="min-w-[7rem] flex-1">
                   <label className="label text-xs">Avg comments (per post)</label>
                   <input
                     className="input text-sm"
-                    type="number"
-                    min={0}
-                    step={10}
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
                     placeholder="e.g. 790"
                     value={p.averageComments}
-                    onChange={(e) =>
-                      p.setAverageComments(e.target.value === "" ? "" : Number(e.target.value))
-                    }
+                    onChange={(e) => p.setAverageComments(e.target.value)}
+                    onBlur={() => p.onNumericBlur("averageComments", p.averageComments)}
+                    onFocus={() => p.onNumericFocus("averageComments")}
                   />
+                  {p.fieldErrors.averageComments && (
+                    <p className="mt-1 text-xs text-rose-600">{p.fieldErrors.averageComments}</p>
+                  )}
                 </div>
               </div>
               <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
@@ -460,15 +580,18 @@ function FormView(p: FormProps) {
               <label className="label">Followers ~30 days ago (optional)</label>
               <input
                 className="input"
-                type="number"
-                min={0}
-                step={500}
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
                 placeholder="e.g. prior month follower count"
                 value={p.followers30DaysAgo}
-                onChange={(e) =>
-                  p.setFollowers30DaysAgo(e.target.value === "" ? "" : Number(e.target.value))
-                }
+                onChange={(e) => p.setFollowers30DaysAgo(e.target.value)}
+                onBlur={() => p.onNumericBlur("followers30DaysAgo", p.followers30DaysAgo)}
+                onFocus={() => p.onNumericFocus("followers30DaysAgo")}
               />
+              {p.fieldErrors.followers30DaysAgo && (
+                <p className="mt-1 text-xs text-rose-600">{p.fieldErrors.followers30DaysAgo}</p>
+              )}
             </div>
           </div>
         </div>

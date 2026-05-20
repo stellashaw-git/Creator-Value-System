@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { parseNonNegativeNumber } from "@/lib/parse-numeric-input";
 import { buildReport } from "@/lib/scoring";
 import { enhanceWithAI } from "@/lib/openai";
 import type { AnalyzeInput, Niche, Platform } from "@/lib/types";
@@ -17,18 +18,14 @@ function parseInput(raw: unknown): AnalyzeInput {
   if (!raw || typeof raw !== "object") throw new Error("Body must be an object.");
   const b = raw as Record<string, unknown>;
 
-  const num = (v: unknown, name: string, min = 0, max = Number.MAX_SAFE_INTEGER): number => {
-    const n = typeof v === "number" ? v : Number(v);
-    if (!Number.isFinite(n)) throw new Error(`${name} must be a number.`);
-    if (n < min || n > max) throw new Error(`${name} out of range.`);
-    return n;
-  };
-
-  const optionalNonneg = (v: unknown): number | undefined => {
+  const optionalNonnegParsed = (v: unknown, label: string): number | undefined => {
     if (v === undefined || v === null || v === "") return undefined;
-    const n = typeof v === "number" ? v : Number(v);
-    if (!Number.isFinite(n) || n < 0) return undefined;
-    return n;
+    const r = parseNonNegativeNumber(String(v));
+    if (!r.ok) {
+      if (r.empty) return undefined;
+      throw new Error(`${label} must be a valid non-negative number.`);
+    }
+    return Math.min(5e9, r.value);
   };
 
   const name = String(b.name ?? "").trim() || "Unnamed Creator";
@@ -37,12 +34,22 @@ function parseInput(raw: unknown): AnalyzeInput {
   const niche = String(b.niche ?? "Other") as Niche;
   if (!NICHES.includes(niche)) throw new Error("Invalid niche.");
 
-  const followers = num(b.followers, "followers", 1, 5e9);
-  const avgViews = num(b.avgViews ?? 0, "avgViews", 0, 5e9);
+  const fr = parseNonNegativeNumber(String(b.followers ?? ""));
+  if (!fr.ok) throw new Error("followers must be a valid number.");
+  if (fr.value <= 0) throw new Error("followers must be greater than 0.");
+  const followers = Math.min(5e9, fr.value);
 
-  const averageLikes = optionalNonneg(b.averageLikes);
-  const averageComments = optionalNonneg(b.averageComments);
-  const followers30DaysAgo = optionalNonneg(b.followers30DaysAgo);
+  const av = parseNonNegativeNumber(String(b.avgViews ?? ""));
+  let avgViews = 0;
+  if (av.ok) {
+    avgViews = Math.min(5e9, av.value);
+  } else if (!av.empty) {
+    throw new Error("avgViews must be a valid non-negative number.");
+  }
+
+  const averageLikes = optionalNonnegParsed(b.averageLikes, "averageLikes");
+  const averageComments = optionalNonnegParsed(b.averageComments, "averageComments");
+  const followers30DaysAgo = optionalNonnegParsed(b.followers30DaysAgo, "followers30DaysAgo");
 
   let engagementRate: number | undefined;
   if (
