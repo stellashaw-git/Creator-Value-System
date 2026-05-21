@@ -1,110 +1,115 @@
 import Link from "next/link";
+import {
+  campaignFitFromReport,
+  campaignFitTone,
+} from "@/lib/campaign-fit";
 import type { Report } from "@/lib/types";
 import { isEngagementKnown, isGrowthKnown } from "@/lib/scoring";
 import { Badge, toneFor } from "./score-badge";
 import { DecisionBanner } from "./decision-banner";
 import { OutreachPanel } from "./outreach-panel";
-
-function formatFollowers(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}K`;
-  return String(n);
-}
+import { ReportCardFeedback } from "./report-card-feedback";
 
 function pct(n: number): string {
   return `${(n * 100).toFixed(1)}%`;
 }
 
-// Subtle pill — used sparingly to mark explainability sections.
-function ReasoningPill() {
+const PILLAR_LABELS: Record<keyof Report["pillarScores"], string> = {
+  engagement: "Engagement",
+  reach: "Reach",
+  growth: "Growth",
+  intent: "Purchase intent",
+};
+
+// ---------------- Insight-first blocks ----------------
+
+function CampaignFit({ report }: { report: Report }) {
+  const fit = campaignFitFromReport(report);
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-600">
-      <span className="inline-block h-1.5 w-1.5 rounded-full bg-neutral-400" />
-      Reasoning
-    </span>
+    <section className="flex flex-col gap-3 rounded-2xl bg-neutral-50/80 px-5 py-4 ring-1 ring-neutral-100 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <p className="section-title">Campaign fit</p>
+        <p className="mt-1 text-sm text-neutral-600">
+          How well this creator matches your category and campaign goals.
+        </p>
+      </div>
+      <Badge label={fit} tone={campaignFitTone(fit)} />
+    </section>
   );
 }
 
-// ---------------- Snapshot ----------------
-
-function Snapshot({ report }: { report: Report }) {
+function CommercialPotential({ report }: { report: Report }) {
   const { input } = report;
-  const cells: {
-    label: string;
-    value: string;
-    sub?: string;
-    tone?: "green" | "amber" | "red" | "neutral";
-  }[] = [
-    { label: "Creator", value: input.name, sub: `${input.platform} · ${input.niche}` },
+  return (
+    <section className="insight-panel">
+      <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="section-title">Commercial potential</p>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-5xl font-extrabold tracking-tight text-neutral-900">
+              {report.overallScore}
+            </span>
+            <span className="text-lg font-medium text-neutral-400">/ 100</span>
+          </div>
+          <p className="mt-1 text-sm text-neutral-500">
+            {input.name} · {input.platform} · {input.niche}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 sm:justify-end">
+          <Badge label={report.engagement.label} tone={toneFor(report.engagement.label)} />
+          <Badge label={report.growth.label} tone={toneFor(report.growth.label)} />
+        </div>
+      </div>
+      <p className="mt-6 text-[17px] leading-relaxed text-neutral-800">
+        {report.memo.executiveSummary}
+      </p>
+    </section>
+  );
+}
+
+function KeySignals({ report }: { report: Report }) {
+  const { input } = report;
+  const items = [
     {
-      label: "Audience size",
-      value: formatFollowers(input.followers),
-      sub: `${formatFollowers(input.avgViews)} avg views`,
+      label: PILLAR_LABELS.engagement,
+      headline: report.engagement.label,
+      detail: isEngagementKnown(input) ? pct(input.engagementRate!) : "Limited data",
+      score: report.pillarScores.engagement,
     },
     {
-      label: "Growth signal",
-      value: report.growth.label,
-      sub: isGrowthKnown(input)
+      label: PILLAR_LABELS.growth,
+      headline: report.growth.label,
+      detail: isGrowthKnown(input)
         ? `+${Math.round(input.growthRate30d! * 100)}% / 30d`
         : "Unknown",
-      tone: toneFor(report.growth.label),
+      score: report.pillarScores.growth,
     },
     {
-      label: "Engagement",
-      value: report.engagement.label,
-      sub: isEngagementKnown(input) ? pct(input.engagementRate!) : "Not enough data",
-      tone: toneFor(report.engagement.label),
-    },
-    {
-      label: "Monetization",
-      value: report.monetization.label,
-      sub: `${report.pillarScores.intent}/100 intent`,
-      tone: toneFor(report.monetization.label),
+      label: PILLAR_LABELS.intent,
+      headline: report.monetization.label,
+      detail: `${report.pillarScores.intent}/100 intent`,
+      score: report.pillarScores.intent,
     },
     {
       label: "Brand fit",
-      value: `${report.brandFit.score}/100`,
-      sub: input.brandCategory || "Niche-native",
+      headline: `${report.brandFit.score}/100`,
+      detail: input.brandCategory || "Niche-native",
+      score: report.brandFit.score,
     },
   ];
 
   return (
-    <section className="card">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="section-title">Creator Opportunity Snapshot</div>
-          <p className="mt-1 text-sm text-neutral-500">
-            Pillar-level read on commercial readiness.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-500">
-            Commercial Score
-          </span>
-          <span className="rounded-lg bg-neutral-900 px-3 py-1.5 text-lg font-extrabold text-white">
-            {report.overallScore}
-            <span className="text-sm font-semibold opacity-70"> / 100</span>
-          </span>
-        </div>
-      </div>
-
-      <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-3">
-        {cells.map((c) => (
+    <section>
+      <p className="section-title mb-4">Key signals</p>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {items.map((item) => (
           <div
-            key={c.label}
-            className="rounded-lg border border-neutral-200 bg-neutral-50/60 p-4"
+            key={item.label}
+            className="rounded-xl bg-neutral-50/80 px-4 py-3.5 ring-1 ring-neutral-100"
           >
-            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-500">
-              {c.label}
-            </div>
-            <div className="mt-1.5 flex items-baseline gap-2">
-              {c.tone ? (
-                <Badge label={c.value} tone={c.tone} />
-              ) : (
-                <span className="text-lg font-bold text-neutral-900">{c.value}</span>
-              )}
-            </div>
-            {c.sub && <div className="mt-1.5 text-xs text-neutral-500">{c.sub}</div>}
+            <p className="text-[11px] font-medium text-neutral-500">{item.label}</p>
+            <p className="mt-1 text-sm font-semibold text-neutral-900">{item.headline}</p>
+            <p className="mt-0.5 text-xs text-neutral-500">{item.detail}</p>
           </div>
         ))}
       </div>
@@ -112,220 +117,120 @@ function Snapshot({ report }: { report: Report }) {
   );
 }
 
-// ---------------- Opportunity Brief (memo) ----------------
+function RecommendedAction({ report }: { report: Report }) {
+  const primary = report.nextActions[0];
+  const rest = report.nextActions.slice(1);
 
-function MemoSection({ heading, body }: { heading: string; body: string }) {
   return (
-    <div className="border-t border-neutral-200 pt-5 first:border-t-0 first:pt-0">
-      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-500">
-        {heading}
-      </div>
-      <p className="mt-2 text-[15px] leading-relaxed text-neutral-800">{body}</p>
-    </div>
-  );
-}
-
-function OpportunityBrief({ report }: { report: Report }) {
-  const m = report.memo;
-  return (
-    <section className="card">
-      <div className="flex flex-col gap-2 border-b border-neutral-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="section-title">Creator Opportunity Brief</div>
-          <h2 className="mt-1 text-xl font-bold tracking-tight text-neutral-900">
-            {report.input.name} · {report.input.niche}
-          </h2>
-          <p className="mt-1 text-xs text-neutral-500">
-            Campaign-decision brief for brand and MCN partnership teams.
-          </p>
+    <section className="insight-panel">
+      <p className="section-title">Recommended action</p>
+      {primary && (
+        <div className="mt-4">
+          <p className="text-lg font-semibold text-neutral-900">{primary.title}</p>
+          <p className="mt-2 text-sm leading-relaxed text-neutral-600">{primary.detail}</p>
         </div>
-        <div className="text-xs text-neutral-500">Prepared by WorthyIQ</div>
-      </div>
-      <div className="mt-6 space-y-5">
-        <MemoSection heading="Executive Summary" body={m.executiveSummary} />
-        <MemoSection heading="Why This Creator Matters" body={m.whyMatters} />
-        <MemoSection heading="Commercial Upside" body={m.commercialUpside} />
-        <MemoSection heading="Audience & Engagement Signal" body={m.audienceSignal} />
-        <MemoSection heading="Monetization Gap" body={m.monetizationGap} />
-        <MemoSection heading="Risk Factors" body={m.riskFactors} />
-      </div>
+      )}
+
+      {(rest.length > 0 || report.outreach) && (
+        <details className="mt-6 group">
+          <summary className="cursor-pointer text-sm font-medium text-neutral-600 hover:text-neutral-900">
+            Outreach drafts & follow-up steps
+          </summary>
+          <div className="mt-5 space-y-6 border-t border-neutral-100 pt-5">
+            {rest.length > 0 && (
+              <ol className="space-y-3">
+                {rest.map((a, idx) => (
+                  <li key={idx} className="text-sm text-neutral-700">
+                    <span className="font-semibold text-neutral-900">{a.title}</span>
+                    <span className="text-neutral-500"> — {a.detail}</span>
+                  </li>
+                ))}
+              </ol>
+            )}
+            <OutreachPanel outreach={report.outreach} />
+          </div>
+        </details>
+      )}
     </section>
   );
 }
 
-// ---------------- Why this decision? (explainability) ----------------
+function FullBrief({ report }: { report: Report }) {
+  const m = report.memo;
+  const sections: { heading: string; body: string }[] = [
+    { heading: "Why this creator matters", body: m.whyMatters },
+    { heading: "Commercial upside", body: m.commercialUpside },
+    { heading: "Audience & engagement", body: m.audienceSignal },
+    { heading: "Monetization gap", body: m.monetizationGap },
+    { heading: "Risk factors", body: m.riskFactors },
+  ];
 
-const PILLAR_LABELS: Record<keyof Report["pillarScores"], string> = {
-  engagement: "Engagement quality",
-  reach: "Reach & audience size",
-  growth: "Growth momentum",
-  intent: "Audience purchase intent",
-};
-
-function pillarVerdict(score: number): { tone: "green" | "amber" | "red"; text: string } {
-  if (score >= 65) return { tone: "green", text: "Strong" };
-  if (score >= 40) return { tone: "amber", text: "Moderate" };
-  return { tone: "red", text: "Weak" };
+  return (
+    <details className="card-quiet group">
+      <summary className="cursor-pointer list-none text-sm font-semibold text-neutral-700 hover:text-neutral-900">
+        <span className="inline-flex items-center gap-2">
+          Detailed evaluation
+          <span className="text-neutral-400 transition group-open:rotate-180">▾</span>
+        </span>
+      </summary>
+      <div className="mt-6 space-y-5 border-t border-neutral-100 pt-6">
+        {sections.map((s) => (
+          <div key={s.heading}>
+            <p className="text-xs font-medium text-neutral-500">{s.heading}</p>
+            <p className="mt-2 text-[15px] leading-relaxed text-neutral-800">{s.body}</p>
+          </div>
+        ))}
+        <div className="rounded-xl bg-neutral-50 p-4">
+          <p className="text-xs font-medium text-neutral-500">Strategy</p>
+          <p className="mt-2 text-sm leading-relaxed text-neutral-800">
+            {m.recommendedStrategy}
+          </p>
+        </div>
+      </div>
+    </details>
+  );
 }
 
-function WhyThisDecision({ report }: { report: Report }) {
+function ScoringDetail({ report }: { report: Report }) {
   const pillars = Object.entries(report.pillarScores) as Array<
     [keyof Report["pillarScores"], number]
   >;
   const sorted = [...pillars].sort((a, b) => a[1] - b[1]);
 
+  function pillarVerdict(score: number): { tone: "green" | "amber" | "red"; text: string } {
+    if (score >= 65) return { tone: "green", text: "Strong" };
+    if (score >= 40) return { tone: "amber", text: "Moderate" };
+    return { tone: "red", text: "Weak" };
+  }
+
   return (
-    <details className="card group" open>
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="section-title">Why this decision?</span>
-            <ReasoningPill />
-          </div>
-          <p className="mt-1 text-sm text-neutral-500">
-            How each pillar contributed to the {report.decision} call.
-          </p>
-        </div>
-        <span className="rounded-md border border-neutral-200 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-600 transition group-open:rotate-180">
-          ▾
+    <details className="card-quiet group">
+      <summary className="cursor-pointer list-none text-sm font-semibold text-neutral-700 hover:text-neutral-900">
+        <span className="inline-flex items-center gap-2">
+          How we scored this evaluation
+          <span className="text-neutral-400 transition group-open:rotate-180">▾</span>
         </span>
       </summary>
-
-      <div className="mt-5 space-y-3">
+      <div className="mt-6 space-y-3 border-t border-neutral-100 pt-6">
         {sorted.map(([key, score]) => {
           const v = pillarVerdict(score);
-          const barColor =
-            v.tone === "green"
-              ? "bg-emerald-500"
-              : v.tone === "amber"
-                ? "bg-amber-500"
-                : "bg-rose-500";
           return (
             <div
               key={key}
-              className="grid grid-cols-[1fr_auto] items-center gap-4 rounded-lg border border-neutral-200 bg-white px-4 py-3"
+              className="flex items-center justify-between gap-4 rounded-lg bg-neutral-50/80 px-4 py-3"
             >
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-neutral-900">
-                    {PILLAR_LABELS[key]}
-                  </span>
-                  <Badge label={v.text} tone={v.tone} />
-                </div>
-                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-neutral-100">
-                  <div
-                    className={`h-full ${barColor}`}
-                    style={{ width: `${Math.max(4, Math.min(100, score))}%` }}
-                  />
-                </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-neutral-800">
+                  {PILLAR_LABELS[key]}
+                </span>
+                <Badge label={v.text} tone={v.tone} />
               </div>
-              <div className="text-right">
-                <div className="text-2xl font-bold tabular-nums text-neutral-900">
-                  {score}
-                </div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-500">
-                  / 100
-                </div>
-              </div>
+              <span className="text-lg font-bold tabular-nums text-neutral-900">{score}</span>
             </div>
           );
         })}
       </div>
-
-      <div className="mt-5 rounded-xl border border-neutral-200 bg-neutral-50 p-5">
-        <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-500">
-          Recommended strategy
-        </div>
-        <p className="mt-2 text-[15px] leading-relaxed text-neutral-800">
-          {report.memo.recommendedStrategy}
-        </p>
-      </div>
-
-      <p className="mt-4 text-xs text-neutral-500">
-        Commercial Score = 35% engagement quality + 25% reach + 25% growth + 15% audience intent.
-        Each pillar is benchmarked against the creator's tier baseline before contributing to the call.
-      </p>
     </details>
-  );
-}
-
-// ---------------- Action layer ----------------
-
-function ActionLayerHeader() {
-  return (
-    <div className="flex items-baseline justify-between border-b border-neutral-200 pb-3">
-      <div>
-        <div className="text-xs font-bold uppercase tracking-[0.16em] text-neutral-500">
-          From decision to campaign
-        </div>
-        <p className="mt-1 text-sm text-neutral-500">
-          Outreach drafts and the next-action plan are tuned to this specific decision.
-        </p>
-      </div>
-      <span className="hidden text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-700 sm:inline">
-        Next step
-      </span>
-    </div>
-  );
-}
-
-function OutreachCard({ report }: { report: Report }) {
-  return (
-    <section className="card">
-      <div>
-        <div className="section-title">Outreach Message Generator</div>
-        <p className="mt-1 text-sm text-neutral-500">
-          Three pre-drafted messages, tuned to the creator's signal. Edit, copy, send.
-        </p>
-      </div>
-      <div className="mt-5">
-        <OutreachPanel outreach={report.outreach} />
-      </div>
-    </section>
-  );
-}
-
-const PRIORITY_STYLES: Record<
-  "now" | "next" | "watch",
-  { label: string; bg: string; ring: string; text: string }
-> = {
-  now: { label: "Do now", bg: "bg-emerald-50", ring: "ring-emerald-200", text: "text-emerald-800" },
-  next: { label: "Do next", bg: "bg-amber-50", ring: "ring-amber-200", text: "text-amber-800" },
-  watch: { label: "Track", bg: "bg-neutral-100", ring: "ring-neutral-200", text: "text-neutral-700" },
-};
-
-function NextActions({ report }: { report: Report }) {
-  return (
-    <section className="card">
-      <div>
-        <div className="section-title">Next Action Plan</div>
-        <p className="mt-1 text-sm text-neutral-500">
-          Three decision-grade moves, prioritized by sequence.
-        </p>
-      </div>
-      <ol className="mt-5 space-y-3">
-        {report.nextActions.map((a, idx) => {
-          const p = PRIORITY_STYLES[a.priority];
-          return (
-            <li
-              key={idx}
-              className="grid grid-cols-[auto_1fr] gap-4 rounded-xl border border-neutral-200 bg-white p-4"
-            >
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900 text-sm font-bold text-white">
-                {idx + 1}
-              </div>
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[15px] font-semibold text-neutral-900">{a.title}</span>
-                  <span className={`badge ${p.bg} ${p.text} ring-1 ${p.ring}`}>{p.label}</span>
-                </div>
-                <p className="mt-1.5 text-sm text-neutral-600">{a.detail}</p>
-              </div>
-            </li>
-          );
-        })}
-      </ol>
-    </section>
   );
 }
 
@@ -335,51 +240,34 @@ export function ReportCard({
   report,
   onRestart,
   savedId,
+  showFeedback = true,
 }: {
   report: Report;
   onRestart: () => void;
   savedId?: string;
+  showFeedback?: boolean;
 }) {
-  const dateLabel = new Date().toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-
   return (
-    <div className="space-y-6">
-      <header className="flex flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900 text-xs font-bold text-white">
-            WIQ
-          </div>
-          <div>
-            <div className="text-xs font-bold uppercase tracking-[0.14em] text-neutral-500">
-              WorthyIQ · Creator Intelligence Platform
-            </div>
-            <div className="text-sm text-neutral-700">
-              Decision ready · {dateLabel}
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
+    <div className="space-y-8">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-neutral-500">
+          Evaluation · <span className="font-semibold text-neutral-800">{report.input.name}</span>
+        </p>
+        <div className="flex items-center gap-2">
           {savedId && (
             <Link
               href={`/dataset/${savedId}`}
-              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-800 hover:bg-emerald-100"
+              className="text-xs font-semibold text-emerald-700 hover:text-emerald-900"
             >
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              Saved · view in dataset
+              Saved →
             </Link>
           )}
-          <button type="button" onClick={onRestart} className="btn-secondary">
-            Evaluate another creator
+          <button type="button" onClick={onRestart} className="btn-secondary !py-2 !px-4 !text-sm">
+            New evaluation
           </button>
         </div>
-      </header>
+      </div>
 
-      {/* The decision leads — system takes responsibility. */}
       <DecisionBanner
         decision={report.decision}
         rationale={report.decisionRationale}
@@ -387,17 +275,19 @@ export function ReportCard({
         confidenceReason={report.decisionConfidenceReason}
       />
 
-      <Snapshot report={report} />
+      {report.decisionConfidence !== "High" && (
+        <p className="text-center text-xs text-neutral-500">
+          Based on partial creator data — add metrics for higher confidence.
+        </p>
+      )}
 
-      <OpportunityBrief report={report} />
-
-      <WhyThisDecision report={report} />
-
-      <ActionLayerHeader />
-
-      <OutreachCard report={report} />
-
-      <NextActions report={report} />
+      <CommercialPotential report={report} />
+      <CampaignFit report={report} />
+      <RecommendedAction report={report} />
+      {savedId && showFeedback && <ReportCardFeedback savedId={savedId} />}
+      <KeySignals report={report} />
+      <FullBrief report={report} />
+      <ScoringDetail report={report} />
     </div>
   );
 }

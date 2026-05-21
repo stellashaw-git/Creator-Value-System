@@ -33,8 +33,17 @@ html, body {
   .card {
     @apply rounded-xl border border-neutral-200 bg-white p-6 shadow-sm;
   }
+  .card-quiet {
+    @apply rounded-2xl border border-neutral-200/70 bg-white p-6;
+  }
+  .upload-surface {
+    @apply rounded-2xl border border-neutral-200/80 bg-gradient-to-b from-white via-white to-neutral-50/90 p-8 sm:p-10;
+  }
+  .insight-panel {
+    @apply rounded-2xl border border-neutral-200/60 bg-white p-6 sm:p-8;
+  }
   .section-title {
-    @apply text-xs font-bold uppercase tracking-[0.12em] text-neutral-500;
+    @apply text-xs font-semibold uppercase tracking-[0.1em] text-neutral-400;
   }
   .badge {
     @apply inline-flex items-center rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wider;

@@ -10,6 +10,7 @@ import type { Report } from "./types";
 
 export type CampaignStatus =
   | "Not started"
+  | "Shortlisted"
   | "Contacted"
   | "In discussion"
   | "Campaign launched"
@@ -17,14 +18,33 @@ export type CampaignStatus =
 
 export const CAMPAIGN_STATUSES: CampaignStatus[] = [
   "Not started",
+  "Shortlisted",
   "Contacted",
   "In discussion",
   "Campaign launched",
   "Completed",
 ];
 
+export type OutcomePerformance = "Strong" | "OK" | "Weak" | "Unknown";
+
+export const OUTCOME_PERFORMANCES: OutcomePerformance[] = [
+  "Strong",
+  "OK",
+  "Weak",
+  "Unknown",
+];
+
+export type FollowedRecommendation = "Yes" | "Modified" | "Ignored";
+
+export const FOLLOWED_RECOMMENDATIONS: FollowedRecommendation[] = [
+  "Yes",
+  "Modified",
+  "Ignored",
+];
+
 export interface CampaignOutcome {
   status: CampaignStatus;
+  performance?: OutcomePerformance;
   budget?: number;
   estimatedROI?: number;
   actualROI?: number;
@@ -39,6 +59,8 @@ export interface SavedEvaluation {
   updatedAt: string; // ISO
   report: Report;
   outcome: CampaignOutcome;
+  /** Did the brand follow WorthyIQ's recommendation for this creator? */
+  followedRecommendation?: FollowedRecommendation;
 }
 
 const STORAGE_KEY = "worthyiq.evaluations.v1";
@@ -98,16 +120,53 @@ export function updateOutcome(
   id: string,
   outcome: CampaignOutcome
 ): SavedEvaluation | undefined {
+  return updateEvaluationFeedback(id, { outcome });
+}
+
+export interface EvaluationFeedbackPatch {
+  outcome?: Partial<CampaignOutcome>;
+  followedRecommendation?: FollowedRecommendation;
+}
+
+export function updateEvaluationFeedback(
+  id: string,
+  patch: EvaluationFeedbackPatch
+): SavedEvaluation | undefined {
   const rows = readAll();
   const idx = rows.findIndex((r) => r.id === id);
   if (idx < 0) return undefined;
+  const prev = rows[idx];
   rows[idx] = {
-    ...rows[idx],
-    outcome,
+    ...prev,
+    outcome: patch.outcome ? { ...prev.outcome, ...patch.outcome } : prev.outcome,
+    followedRecommendation:
+      patch.followedRecommendation !== undefined
+        ? patch.followedRecommendation
+        : prev.followedRecommendation,
     updatedAt: new Date().toISOString(),
   };
   writeAll(rows);
   return rows[idx];
+}
+
+/** Short label for tables and chips */
+export function pipelineStatusLabel(status: CampaignStatus): string {
+  switch (status) {
+    case "Not started":
+      return "Not started";
+    case "Shortlisted":
+      return "Shortlisted";
+    case "Contacted":
+      return "Contacted";
+    case "In discussion":
+      return "In discussion";
+    case "Campaign launched":
+      return "Launched";
+    case "Completed":
+      return "Completed";
+    default:
+      return status;
+  }
 }
 
 export function deleteEvaluation(id: string): void {

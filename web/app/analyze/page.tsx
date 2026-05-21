@@ -5,7 +5,9 @@ import { useEffect, useState } from "react";
 import { ReportCard } from "@/components/report-card";
 import { AgentThinking } from "@/components/agent-thinking";
 import { ScreenshotUpload } from "@/components/screenshot-upload";
+import { TrialPaywall } from "@/components/trial-paywall";
 import { saveEvaluation } from "@/lib/dataset";
+import { canRunFreeEvaluation, incrementTrialUsage } from "@/lib/trial";
 import type { ExtractedSignals } from "@/lib/extract";
 import { parseNonNegativeNumber } from "@/lib/parse-numeric-input";
 import type { AnalyzeInput, Niche, Platform, Report } from "@/lib/types";
@@ -73,6 +75,8 @@ export default function AnalyzePage() {
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
+  const [usageRefresh, setUsageRefresh] = useState(0);
+  const [manualOpen, setManualOpen] = useState(false);
 
   const [name, setName] = useState("");
   const [platform, setPlatform] = useState<Platform>("Instagram");
@@ -137,6 +141,7 @@ export default function AnalyzePage() {
       setBrandCategory(DEMO.brandCategory || "");
       setComments(DEMO.comments.join("\n"));
       setFieldErrors({});
+      setManualOpen(true);
     }
   }, []);
 
@@ -185,6 +190,7 @@ export default function AnalyzePage() {
       setComments(commentLines.join("\n"));
     }
     // Smooth scroll to the form so the user can review.
+    setManualOpen(true);
     requestAnimationFrame(() => {
       document
         .getElementById("review-anchor")
@@ -196,6 +202,9 @@ export default function AnalyzePage() {
     e.preventDefault();
     setFieldErrors({});
     setError(null);
+    if (!canRunFreeEvaluation()) {
+      return setError("You've reached today's free evaluations. Join early access to continue.");
+    }
     if (!name.trim()) return setError("Creator name is required.");
 
     const fr = parseNonNegativeNumber(followers);
@@ -289,6 +298,8 @@ export default function AnalyzePage() {
       setReport(json.report);
       // Persist to the local Creator Intelligence Dataset.
       const saved = saveEvaluation(json.report);
+      incrementTrialUsage();
+      setUsageRefresh((k) => k + 1);
       setSavedId(saved.id);
       setStage("result");
     } catch (err) {
@@ -317,19 +328,29 @@ export default function AnalyzePage() {
             </Link>
             <nav className="hidden items-center gap-3 text-xs font-semibold text-neutral-500 sm:flex">
               <Link href="/dataset" className="hover:text-neutral-900">
-                Dataset
+                Saved
+              </Link>
+              <Link href="/compare" className="hover:text-neutral-900">
+                Compare
+              </Link>
+              <Link href="/waitlist" className="text-neutral-400 hover:text-neutral-900">
+                Early access
               </Link>
             </nav>
           </div>
           {stage === "form" && (
             <Link href="/analyze?demo=1" className="text-xs font-semibold text-neutral-500 hover:text-neutral-900">
-              Load sample creator →
+              Try sample creator →
             </Link>
           )}
         </div>
       </header>
 
-      <div className="mx-auto max-w-6xl px-6 py-10">
+      <div
+        className={`mx-auto px-6 py-12 sm:py-14 ${
+          stage === "result" ? "max-w-4xl" : "max-w-3xl"
+        }`}
+      >
         {stage === "form" && (
             <FormView
             {...{
@@ -345,6 +366,10 @@ export default function AnalyzePage() {
               error,
               onSubmit: runAnalysis,
               onExtracted,
+              atLimit: !canRunFreeEvaluation(),
+              usageRefresh,
+              manualOpen,
+              onManualOpenChange: setManualOpen,
             }}
           />
         )}
@@ -388,46 +413,53 @@ interface FormProps {
   error: string | null;
   onSubmit: (e: React.FormEvent) => void;
   onExtracted: (data: ExtractedSignals) => void;
+  atLimit: boolean;
+  usageRefresh: number;
+  manualOpen: boolean;
+  onManualOpenChange: (open: boolean) => void;
 }
 
 function FormView(p: FormProps) {
   return (
     <div>
-      <div>
-        <div className="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-500">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-          Step 1 · Drop in screenshots or fill manually
-        </div>
-        <h1 className="mt-3 text-3xl font-extrabold tracking-tight text-neutral-900 sm:text-4xl">
-          Which creator should we evaluate?
+      <div className="mb-10">
+        <h1 className="text-2xl font-semibold tracking-tight text-neutral-900 sm:text-3xl">
+          Evaluate a creator
         </h1>
-        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-neutral-600">
-          Upload screenshots of the creator's profile, posts, or comments and we'll extract the
-          signals into the form below — so your campaign team moves from research to a decision
-          brief in minutes, not days. Manual input still works as a fallback.
+        <p className="mt-2 text-sm text-neutral-500">
+          Upload → extract → decision
         </p>
       </div>
 
-      <div className="mt-8 space-y-6">
-        <ScreenshotUpload onExtracted={p.onExtracted} />
-      </div>
+      <ScreenshotUpload onExtracted={p.onExtracted} />
 
-      <div id="review-anchor" className="mt-10 flex items-center gap-3">
-        <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-neutral-500">
-          Step 2
-        </span>
-        <span className="h-px flex-1 bg-neutral-200" />
-        <h2 className="text-base font-bold tracking-tight text-neutral-900">
-          Review the extracted profile
-        </h2>
-      </div>
-      <p className="mt-1 text-xs text-neutral-500">
-        Edit any field that's wrong or missing. This is the data the platform will evaluate.
-      </p>
+      {p.atLimit && (
+        <div className="mt-8">
+          <TrialPaywall refreshKey={p.usageRefresh} />
+        </div>
+      )}
 
-      <form onSubmit={p.onSubmit} className="mt-6 space-y-6">
-        <div className="card">
-          <h2 className="section-title">Profile</h2>
+      <form onSubmit={p.onSubmit} className="mt-12 space-y-8">
+        <details
+          id="review-anchor"
+          className="group scroll-mt-24"
+          open={p.manualOpen}
+          onToggle={(e) => p.onManualOpenChange((e.target as HTMLDetailsElement).open)}
+        >
+          <summary className="cursor-pointer list-none text-sm font-medium text-neutral-600 hover:text-neutral-900">
+            <span className="inline-flex items-center gap-2">
+              Or add metrics manually
+              <span className="text-neutral-400 transition group-open:rotate-180">▾</span>
+            </span>
+          </summary>
+
+          <p className="mb-4 text-xs text-neutral-500">
+            More complete data → more accurate evaluation. Partial data still runs — confidence
+            adjusts automatically.
+          </p>
+          <div className="space-y-5">
+        <div className="card-quiet !p-5">
+          <p className="text-xs font-medium text-neutral-500">Profile</p>
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="label">Creator name *</label>
@@ -474,11 +506,8 @@ function FormView(p: FormProps) {
           </div>
         </div>
 
-        <div className="card">
-          <h2 className="section-title">Audience metrics</h2>
-          <p className="mt-2 text-xs text-neutral-600">
-            More complete data → more accurate evaluation
-          </p>
+        <div className="card-quiet !p-5">
+          <p className="text-xs font-medium text-neutral-500">Metrics</p>
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <label className="label">Followers *</label>
@@ -515,7 +544,7 @@ function FormView(p: FormProps) {
             <div className="sm:col-span-2">
               <div className="flex flex-wrap gap-3">
                 <div className="min-w-[7rem] flex-1">
-                  <label className="label text-xs">Avg likes (per post)</label>
+                  <label className="label text-xs">Avg likes per post (past 30 days)</label>
                   <input
                     className="input text-sm"
                     type="text"
@@ -532,7 +561,7 @@ function FormView(p: FormProps) {
                   )}
                 </div>
                 <div className="min-w-[7rem] flex-1">
-                  <label className="label text-xs">Avg comments (per post)</label>
+                  <label className="label text-xs">Avg comments per post (past 30 days)</label>
                   <input
                     className="input text-sm"
                     type="text"
@@ -550,8 +579,7 @@ function FormView(p: FormProps) {
                 </div>
               </div>
               <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
-                Use averages from posts in the <span className="font-medium text-neutral-700">last 30 days</span> so
-                the numbers reflect current cadence, not lifetime or one-off viral spikes.
+                Use recent creator content averages from the past 30 days if available.
               </p>
             </div>
             <div>
@@ -561,9 +589,6 @@ function FormView(p: FormProps) {
                 readOnly
                 value={engagementDisplayPct(p.followers, p.averageLikes, p.averageComments)}
               />
-              <p className="mt-1 text-[11px] text-neutral-500">
-                Auto-calculated from likes, comments, and followers
-              </p>
             </div>
             <div>
               <label className="label">30-day growth (%)</label>
@@ -572,9 +597,6 @@ function FormView(p: FormProps) {
                 readOnly
                 value={growthDisplayPct(p.followers, p.followers30DaysAgo)}
               />
-              <p className="mt-1 text-[11px] text-neutral-500">
-                Optional — only if historical data is available
-              </p>
             </div>
             <div className="sm:col-span-2">
               <label className="label">Followers ~30 days ago (optional)</label>
@@ -596,18 +618,17 @@ function FormView(p: FormProps) {
           </div>
         </div>
 
-        <div className="card">
-          <h2 className="section-title">Sample comments</h2>
-          <p className="mt-1 text-xs text-neutral-500">
-            One per line. Drives the audience-intent read. 15+ for a real signal.
-          </p>
+        <div className="card-quiet !p-5">
+          <p className="text-xs font-medium text-neutral-500">Comments</p>
           <textarea
-            className="input mt-3 min-h-[180px] font-mono text-xs"
+            className="input mt-3 min-h-[140px] font-mono text-xs"
             placeholder={"where did you get this?\nlink pls 🙏\nprice?\nso pretty 😍"}
             value={p.comments}
             onChange={(e) => p.setComments(e.target.value)}
           />
         </div>
+          </div>
+        </details>
 
         {p.error && (
           <div className="rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-rose-200">
@@ -615,12 +636,12 @@ function FormView(p: FormProps) {
           </div>
         )}
 
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-end gap-4 border-t border-neutral-100 pt-8">
           <Link href="/" className="text-sm text-neutral-500 hover:text-neutral-900">
-            ← Back
+            Back
           </Link>
-          <button type="submit" className="btn-primary">
-            Evaluate a Creator →
+          <button type="submit" className="btn-primary !px-8" disabled={p.atLimit}>
+            Run evaluation →
           </button>
         </div>
       </form>

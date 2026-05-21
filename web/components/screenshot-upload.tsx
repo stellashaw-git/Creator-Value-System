@@ -135,20 +135,11 @@ export function ScreenshotUpload({
   };
 
   return (
-    <div className="card">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="section-title">Upload creator screenshots</h2>
-            <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-600">
-              Recommended
-            </span>
-          </div>
-          <p className="mt-1 text-sm text-neutral-600">
-            Upload 1–5 screenshots of the creator's profile, recent posts, post analytics, or
-            comment sections. We extract structured signals so you can skip manual entry.
-          </p>
-        </div>
+    <div className="upload-surface">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-medium text-neutral-600">
+          Profile, posts, or comments · up to {MAX_FILES} images
+        </p>
         {files.length > 0 && (
           <button
             type="button"
@@ -160,7 +151,6 @@ export function ScreenshotUpload({
         )}
       </div>
 
-      {/* Drop zone */}
       <label
         htmlFor="screenshot-input"
         onDragOver={(e) => {
@@ -169,21 +159,20 @@ export function ScreenshotUpload({
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
-        className={`mt-4 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-8 text-center transition ${
+        className={`mt-6 flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed py-14 text-center transition sm:py-20 ${
           dragOver
-            ? "border-neutral-900 bg-neutral-50"
-            : "border-neutral-300 bg-neutral-50/50 hover:border-neutral-400"
+            ? "border-neutral-900 bg-neutral-900/[0.02]"
+            : "border-neutral-200 bg-white/60 hover:border-neutral-400"
         }`}
       >
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-xl shadow-sm ring-1 ring-neutral-200">
-          ⬆
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-neutral-900 text-lg text-white shadow-md">
+          ↑
         </div>
-        <div className="text-sm font-semibold text-neutral-900">
-          Drop screenshots here or click to browse
+        <div className="text-base font-semibold text-neutral-900">
+          Drop creator screenshots
         </div>
         <div className="text-xs text-neutral-500">
-          PNG / JPEG · up to {MAX_FILES} images · works for Instagram, TikTok, YouTube, X /
-          Twitter, Xiaohongshu / RED, and more.
+          or click to browse · PNG / JPEG
         </div>
         <input
           id="screenshot-input"
@@ -234,25 +223,19 @@ export function ScreenshotUpload({
         </ul>
       )}
 
-      <p className="mt-4 text-[11px] leading-relaxed text-neutral-500">
-        Screenshot extraction may miss or misread some fields. Please review the form below
-        before running the evaluation.
-      </p>
-
-      {/* Action row */}
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <div className="text-xs text-neutral-500">
           {files.length === 0
-            ? "No screenshots yet."
-            : `${files.length} image${files.length === 1 ? "" : "s"} ready · auto-compressed before upload.`}
+            ? ""
+            : `${files.length} ready`}
         </div>
         <button
           type="button"
           onClick={handleExtract}
           disabled={files.length === 0 || extracting}
-          className="btn-primary !py-2 !px-4 disabled:cursor-not-allowed disabled:opacity-50"
+          className="btn-primary !py-2.5 !px-5 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {extracting ? "Extracting…" : "Extract Creator Signals"}
+          {extracting ? "Extracting…" : "Extract signals"}
         </button>
       </div>
 
@@ -289,74 +272,18 @@ function ExtractionSummary({
         ? { label: "Mock fallback", tone: "bg-amber-50 text-amber-800 ring-amber-200" }
         : { label: "Demo mock", tone: "bg-neutral-100 text-neutral-700 ring-neutral-200" };
 
-  // Group confidence levels.
-  const confidenceEntries = Object.entries(data.confidence) as Array<
-    [string, "high" | "medium" | "low"]
-  >;
-
   return (
-    <div className="mt-5 rounded-xl border border-neutral-200 bg-neutral-50 p-5">
+    <div className="mt-5 rounded-xl bg-emerald-50/80 px-4 py-3 ring-1 ring-emerald-100">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-500">
-            Extraction complete
-          </div>
-          <div className="mt-1 text-sm font-semibold text-neutral-900">
-            Form below has been pre-filled. Review and edit before evaluation.
-          </div>
-        </div>
+        <p className="text-sm font-medium text-emerald-900">
+          Signals extracted — review metrics below, then run evaluation.
+        </p>
         <span className={`badge ring-1 ${modeBadge.tone}`}>{modeBadge.label}</span>
       </div>
-
-      {confidenceEntries.length > 0 && (
-        <div className="mt-4">
-          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-500">
-            Field confidence
-          </div>
-          <ul className="mt-2 flex flex-wrap gap-1.5">
-            {confidenceEntries.map(([field, level]) => (
-              <li
-                key={field}
-                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${CONFIDENCE_TONE[level]}`}
-              >
-                <span className="capitalize">{field.replace(/_/g, " ")}</span>
-                <span className="opacity-75">·</span>
-                <span className="capitalize">{level}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
       {data.missing_fields.length > 0 && (
-        <div className="mt-4">
-          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-500">
-            Missing fields — please fill manually
-          </div>
-          <div className="mt-2 text-xs leading-relaxed text-neutral-700">
-            {data.missing_fields.join(" · ")}
-          </div>
-        </div>
-      )}
-
-      {data.visible_post_signals.length > 0 && (
-        <div className="mt-4">
-          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-500">
-            What we saw in the screenshots
-          </div>
-          <ul className="mt-2 space-y-1 text-xs text-neutral-700">
-            {data.visible_post_signals.slice(0, 4).map((s, i) => (
-              <li key={i} className="flex gap-2">
-                <span className="text-neutral-400">·</span>
-                <span>{s}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {data.notes && (
-        <p className="mt-4 text-[11px] italic leading-relaxed text-neutral-500">{data.notes}</p>
+        <p className="mt-2 text-xs text-emerald-800/90">
+          Still needed: {data.missing_fields.join(", ")}
+        </p>
       )}
     </div>
   );

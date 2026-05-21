@@ -45,10 +45,10 @@ export function DecisionBanner({
   const c = CONFIDENCE_TONES[confidence];
   return (
     <div
-      className={`rounded-2xl ${t.bg} p-8 shadow-lg ring-1 ${t.ring} ${t.text}`}
+      className={`rounded-2xl ${t.bg} p-6 sm:p-8 shadow-lg ring-1 ${t.ring} ${t.text}`}
     >
-      <div className="text-xs font-bold uppercase tracking-[0.16em] opacity-80">
-        Final Decision
+      <div className="text-xs font-semibold uppercase tracking-[0.12em] opacity-80">
+        Decision
       </div>
       <div className="mt-3 grid grid-cols-1 gap-6 sm:grid-cols-[1fr_auto] sm:items-start">
         <div>
@@ -61,8 +61,8 @@ export function DecisionBanner({
         </div>
 
         <div className={`min-w-[180px] rounded-xl ${c.bg} px-4 py-3 ring-1 ring-white/15`}>
-          <div className="text-[10px] font-bold uppercase tracking-[0.16em] opacity-70">
-            Decision Confidence
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] opacity-70">
+            Confidence
           </div>
           <div className="mt-1.5 flex items-center gap-2">
             <span className={`inline-block h-2 w-2 rounded-full ${c.dot}`} />

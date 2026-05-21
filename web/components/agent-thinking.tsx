@@ -47,7 +47,7 @@ export function AgentThinking({ active }: { active: boolean }) {
             Evaluation in progress
           </div>
           <div className="text-sm text-neutral-700">
-            Building the Creator Opportunity Brief…
+            Synthesizing your creator evaluation…
           </div>
         </div>
       </div>
