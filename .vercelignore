@@ -1,4 +1,6 @@
 # Streamlit prototype at repo root — production is web/ (Next.js)
+# If app.py exists at root, Vercel fails; keep streamlit_app.py only (see README.md)
+app.py
 streamlit_app.py
 requirements.txt
 pages/

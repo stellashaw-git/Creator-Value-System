@@ -1,6 +1,10 @@
 """
 Streamlit entrypoint: Solo Creator Monetization Diagnosis (Instagram-first).
 
+IMPORTANT — Do NOT rename this file to app.py.
+Vercel treats any repo-root app.py as Python serverless and breaks the Next.js
+deploy in web/. Production: Vercel Root Directory = web (see README.md).
+
 Primary questions the output answers:
   1. Why am I not getting better paid brand deals?
   2. Does my audience show buying intent?

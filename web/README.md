@@ -76,16 +76,16 @@ If likes/comments or historical followers are missing, the UI shows **Not enough
 
 ## Deploy to Vercel
 
-This is a vanilla Next.js App Router project, so Vercel is one click:
+**Full checklist:** [`DEPLOY.md`](./DEPLOY.md) (read this before changing Vercel settings).
 
-1. Push this repo to GitHub (already configured).
-2. Go to https://vercel.com/new and import the repo.
-3. Set the **Root Directory** to `web/`.
-4. Add environment variables in the Vercel project settings:
-   - `OPENAI_API_KEY` — your key (optional but recommended for production)
-   - `OPENAI_MODEL` — defaults to `gpt-4o-mini`
-   - `OPENAI_VISION_MODEL` — defaults to `gpt-4o-mini`
-5. Deploy. The build runs `next build`; no other configuration needed.
+1. Push this repo to GitHub.
+2. Import at https://vercel.com/new
+3. **Root Directory:** `web` (required — repo root is Streamlit, not Next.js)
+4. **Disable** “Include files outside the root directory in the Build Step”
+5. Add env vars (`OPENAI_API_KEY`, optional webhook vars) in project settings
+6. Deploy — `npm run build` runs a guard so a root `app.py` cannot slip in again
+
+Never add `app.py` at the repository root; use `streamlit_app.py` for the Streamlit prototype.
 
 The `/api/analyze` and `/api/extract-screenshot` routes both run on Vercel's Node runtime (60-second max duration). All OpenAI calls happen server-side — the key is never exposed to the client.
 
