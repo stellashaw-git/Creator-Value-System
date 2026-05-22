@@ -16,8 +16,7 @@ export function ReportCardFeedback({ savedId }: { savedId: string }) {
   return (
     <WhatHappenedNext
       evaluationId={savedId}
-      initialStatus={row.outcome.status}
-      initialFollowed={row.followedRecommendation}
+      initialWorkflow={row.userWorkflow}
       initialPerformance={row.outcome.performance}
     />
   );

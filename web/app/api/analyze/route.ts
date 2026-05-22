@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { parseNonNegativeNumber } from "@/lib/parse-numeric-input";
 import { buildReport } from "@/lib/scoring";
 import { enhanceWithAI } from "@/lib/openai";
+import { CAMPAIGN_GOALS, type CampaignGoal } from "@/lib/intelligence-types";
 import type { AnalyzeInput, Niche, Platform } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -90,6 +91,12 @@ function parseInput(raw: unknown): AnalyzeInput {
       ? b.brandCategory.trim()
       : undefined;
 
+  const campaignGoalRaw =
+    typeof b.campaignGoal === "string" ? b.campaignGoal.trim() : "";
+  const campaignGoal = CAMPAIGN_GOALS.includes(campaignGoalRaw as CampaignGoal)
+    ? (campaignGoalRaw as CampaignGoal)
+    : undefined;
+
   return {
     name,
     platform,
@@ -103,6 +110,7 @@ function parseInput(raw: unknown): AnalyzeInput {
     followers30DaysAgo,
     comments,
     brandCategory,
+    campaignGoal,
   };
 }
 

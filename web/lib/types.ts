@@ -1,3 +1,5 @@
+import type { CampaignGoal } from "./intelligence-types";
+
 export type Platform =
   | "Instagram"
   | "TikTok"
@@ -44,7 +46,10 @@ export interface AnalyzeInput {
   /** Optional; with current followers yields growthRate30d. */
   followers30DaysAgo?: number;
   comments: string[];
+  /** Brand vertical (optional campaign context). */
   brandCategory?: string;
+  /** Optional campaign objective for fit scoring context. */
+  campaignGoal?: CampaignGoal;
 }
 
 export interface CommentIntent {

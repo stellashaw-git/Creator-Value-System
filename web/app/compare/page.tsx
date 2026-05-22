@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { logWorkflowEvent } from "@/lib/workflow-events";
 import { SiteHeader } from "@/components/site-header";
 import { Badge, toneFor } from "@/components/score-badge";
 import {
@@ -19,8 +20,16 @@ function formatFollowers(n: number): string {
 export default function ComparePage() {
   const [rows, setRows] = useState<SavedEvaluation[] | null>(null);
 
+  const loggedCompare = useRef(false);
+
   useEffect(() => {
     setRows(listEvaluations());
+    if (!loggedCompare.current) {
+      loggedCompare.current = true;
+      logWorkflowEvent("creator_compared", {
+        meta: { count: listEvaluations().length },
+      });
+    }
   }, []);
 
   return (

@@ -6,10 +6,18 @@ import { ReportCard } from "@/components/report-card";
 import { AgentThinking } from "@/components/agent-thinking";
 import { ScreenshotUpload } from "@/components/screenshot-upload";
 import { TrialPaywall } from "@/components/trial-paywall";
+import { WebhookSyncDevTest } from "@/components/webhook-sync-dev-test";
 import { saveEvaluation } from "@/lib/dataset";
+import { syncIntelligenceRecord } from "@/lib/intelligence-sync";
 import { canRunFreeEvaluation, incrementTrialUsage } from "@/lib/trial";
 import type { ExtractedSignals } from "@/lib/extract";
 import { parseNonNegativeNumber } from "@/lib/parse-numeric-input";
+import {
+  BRAND_CATEGORY_TAGS,
+  CAMPAIGN_GOALS,
+  type BrandCategoryTag,
+  type CampaignGoal,
+} from "@/lib/intelligence-types";
 import type { AnalyzeInput, Niche, Platform, Report } from "@/lib/types";
 
 type NumField =
@@ -36,7 +44,8 @@ const DEMO: AnalyzeInput = {
   averageLikes: 3000,
   averageComments: 790,
   followers30DaysAgo: 74234,
-  brandCategory: "supplements",
+  brandCategory: "Fitness",
+  campaignGoal: "Conversion",
   comments: [
     "where did you get this?", "link pls 🙏", "so pretty 😍",
     "omg how", "price?", "code please", "amazing", "🔥🔥🔥",
@@ -76,6 +85,7 @@ export default function AnalyzePage() {
   const [report, setReport] = useState<Report | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
   const [usageRefresh, setUsageRefresh] = useState(0);
+  const [atLimit, setAtLimit] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
 
   const [name, setName] = useState("");
@@ -86,10 +96,10 @@ export default function AnalyzePage() {
   const [averageLikes, setAverageLikes] = useState("");
   const [averageComments, setAverageComments] = useState("");
   const [followers30DaysAgo, setFollowers30DaysAgo] = useState("");
-  const [brandCategory, setBrandCategory] = useState("");
+  const [brandCategory, setBrandCategory] = useState<BrandCategoryTag | "">("");
+  const [campaignGoal, setCampaignGoal] = useState<CampaignGoal | "">("");
   const [comments, setComments] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<NumField, string>>>({});
-
   const clearFieldError = (key: NumField) => {
     setFieldErrors((prev) => {
       if (!(key in prev)) return prev;
@@ -125,6 +135,10 @@ export default function AnalyzePage() {
   };
 
   useEffect(() => {
+    setAtLimit(!canRunFreeEvaluation());
+  }, [usageRefresh]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("demo") === "1") {
@@ -138,7 +152,8 @@ export default function AnalyzePage() {
       if (DEMO.followers30DaysAgo !== undefined) {
         setFollowers30DaysAgo(String(DEMO.followers30DaysAgo));
       }
-      setBrandCategory(DEMO.brandCategory || "");
+      setBrandCategory((DEMO.brandCategory as BrandCategoryTag) || "");
+      setCampaignGoal((DEMO.campaignGoal as CampaignGoal) || "");
       setComments(DEMO.comments.join("\n"));
       setFieldErrors({});
       setManualOpen(true);
@@ -272,7 +287,8 @@ export default function AnalyzePage() {
       averageLikes: averageLikesNum,
       averageComments: averageCommentsNum,
       followers30DaysAgo: followers30Num,
-      brandCategory: brandCategory.trim() || undefined,
+      brandCategory: brandCategory || undefined,
+      campaignGoal: campaignGoal || undefined,
       comments: comments
         .split(/\r?\n/)
         .map((s) => s.trim())
@@ -295,9 +311,12 @@ export default function AnalyzePage() {
       if (elapsed < minLoadingMs) {
         await new Promise((r) => setTimeout(r, minLoadingMs - elapsed));
       }
-      setReport(json.report);
-      // Persist to the local Creator Intelligence Dataset.
       const saved = saveEvaluation(json.report);
+      setReport(json.report);
+      const sync = await syncIntelligenceRecord(saved, json.report, "created");
+      if (!sync.synced) {
+        console.warn("[analyze] Make sync did not complete:", sync);
+      }
       incrementTrialUsage();
       setUsageRefresh((k) => k + 1);
       setSavedId(saved.id);
@@ -359,14 +378,16 @@ export default function AnalyzePage() {
               averageLikes, setAverageLikes,
               averageComments, setAverageComments,
               followers30DaysAgo, setFollowers30DaysAgo,
-              brandCategory, setBrandCategory, comments, setComments,
+              brandCategory, setBrandCategory,
+              campaignGoal, setCampaignGoal,
+              comments, setComments,
               fieldErrors,
               onNumericBlur: handleNumericBlur,
               onNumericFocus: clearFieldError,
               error,
               onSubmit: runAnalysis,
               onExtracted,
-              atLimit: !canRunFreeEvaluation(),
+              atLimit,
               usageRefresh,
               manualOpen,
               onManualOpenChange: setManualOpen,
@@ -381,6 +402,7 @@ export default function AnalyzePage() {
         {stage === "result" && report && (
           <ReportCard report={report} onRestart={reset} savedId={savedId ?? undefined} />
         )}
+        {process.env.NODE_ENV === "development" && <WebhookSyncDevTest />}
       </div>
     </main>
   );
@@ -403,8 +425,10 @@ interface FormProps {
   setAverageComments: (v: string) => void;
   followers30DaysAgo: string;
   setFollowers30DaysAgo: (v: string) => void;
-  brandCategory: string;
-  setBrandCategory: (v: string) => void;
+  brandCategory: BrandCategoryTag | "";
+  setBrandCategory: (v: BrandCategoryTag | "") => void;
+  campaignGoal: CampaignGoal | "";
+  setCampaignGoal: (v: CampaignGoal | "") => void;
   comments: string;
   setComments: (v: string) => void;
   fieldErrors: Partial<Record<NumField, string>>;
@@ -433,11 +457,7 @@ function FormView(p: FormProps) {
 
       <ScreenshotUpload onExtracted={p.onExtracted} />
 
-      {p.atLimit && (
-        <div className="mt-8">
-          <TrialPaywall refreshKey={p.usageRefresh} />
-        </div>
-      )}
+      <TrialPaywall refreshKey={p.usageRefresh} />
 
       <form onSubmit={p.onSubmit} className="mt-12 space-y-8">
         <details
@@ -494,14 +514,46 @@ function FormView(p: FormProps) {
                 ))}
               </select>
             </div>
-            <div>
-              <label className="label">Brand category (optional)</label>
-              <input
-                className="input"
-                placeholder="e.g. supplements, skincare"
-                value={p.brandCategory}
-                onChange={(e) => p.setBrandCategory(e.target.value)}
-              />
+          </div>
+          <div className="mt-4 border-t border-neutral-100 pt-4">
+            <p className="text-[11px] font-medium text-neutral-500">
+              Campaign context <span className="font-normal">(optional)</span>
+            </p>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="label text-xs">Brand category</label>
+                <select
+                  className="input text-sm"
+                  value={p.brandCategory}
+                  onChange={(e) =>
+                    p.setBrandCategory(e.target.value as BrandCategoryTag | "")
+                  }
+                >
+                  <option value="">—</option>
+                  {BRAND_CATEGORY_TAGS.map((x) => (
+                    <option key={x} value={x}>
+                      {x}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="label text-xs">Campaign goal</label>
+                <select
+                  className="input text-sm"
+                  value={p.campaignGoal}
+                  onChange={(e) =>
+                    p.setCampaignGoal(e.target.value as CampaignGoal | "")
+                  }
+                >
+                  <option value="">—</option>
+                  {CAMPAIGN_GOALS.map((x) => (
+                    <option key={x} value={x}>
+                      {x}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
         </div>

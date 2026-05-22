@@ -15,7 +15,7 @@ export function TrialPaywall({ refreshKey = 0 }: { refreshKey?: number }) {
   if (!atLimit) return null;
 
   return (
-    <div className="rounded-2xl border border-neutral-200/80 bg-gradient-to-b from-neutral-900 to-neutral-800 p-6 text-white shadow-lg sm:p-8">
+    <div className="mt-8 rounded-2xl border border-neutral-200/80 bg-gradient-to-b from-neutral-900 to-neutral-800 p-6 text-white shadow-lg sm:p-8">
       <p className="text-sm font-medium text-neutral-300">
         You&apos;ve reached today&apos;s free creator evaluations.
       </p>

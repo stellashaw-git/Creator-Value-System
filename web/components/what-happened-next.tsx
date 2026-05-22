@@ -2,53 +2,58 @@
 
 import { useState } from "react";
 import {
-  type CampaignStatus,
-  type FollowedRecommendation,
-  type OutcomePerformance,
+  outcomeStatusToPerformance,
+  performanceToOutcomeStatus,
   updateEvaluationFeedback,
+  userWorkflowFromRow,
+  type OutcomePerformance,
 } from "@/lib/dataset";
+import {
+  DEFAULT_USER_WORKFLOW,
+  type OutcomeStatus,
+  type UserWorkflow,
+} from "@/lib/intelligence-types";
 
-const STATUS_CHIPS: { label: string; status: CampaignStatus }[] = [
-  { label: "Not pursuing", status: "Not started" },
-  { label: "Shortlisted", status: "Shortlisted" },
-  { label: "Contacted", status: "Contacted" },
-  { label: "In discussion", status: "In discussion" },
-  { label: "Launched", status: "Campaign launched" },
-  { label: "Completed", status: "Completed" },
+const WORKFLOW_CHIPS: { label: string; key: keyof UserWorkflow }[] = [
+  { label: "Saved", key: "saved" },
+  { label: "Shortlisted", key: "shortlisted" },
+  { label: "Contacted", key: "contacted" },
+  { label: "Campaign launched", key: "campaign_launched" },
 ];
 
-const FOLLOW_CHIPS: FollowedRecommendation[] = ["Yes", "Modified", "Ignored"];
-
-const PERFORMANCE_CHIPS: OutcomePerformance[] = ["Strong", "OK", "Weak", "Unknown"];
+const OUTCOME_CHIPS: { label: string; status: OutcomeStatus }[] = [
+  { label: "Strong", status: "strong" },
+  { label: "OK", status: "ok" },
+  { label: "Weak", status: "weak" },
+  { label: "Unknown", status: "unknown" },
+];
 
 export function WhatHappenedNext({
   evaluationId,
-  initialStatus,
-  initialFollowed,
+  initialWorkflow,
   initialPerformance,
   compact = false,
 }: {
   evaluationId: string;
-  initialStatus: CampaignStatus;
-  initialFollowed?: FollowedRecommendation;
+  initialWorkflow?: UserWorkflow;
   initialPerformance?: OutcomePerformance;
   compact?: boolean;
 }) {
-  const [status, setStatus] = useState(initialStatus);
-  const [followed, setFollowed] = useState(initialFollowed);
-  const [performance, setPerformance] = useState<OutcomePerformance | undefined>(
-    initialPerformance
+  const [workflow, setWorkflow] = useState<UserWorkflow>(
+    initialWorkflow ?? DEFAULT_USER_WORKFLOW
   );
-  const [saved, setSaved] = useState(false);
-
-  const showPerformance =
-    status === "Campaign launched" || status === "Completed";
+  const [outcome, setOutcome] = useState<OutcomeStatus>(() =>
+    performanceToOutcomeStatus(initialPerformance)
+  );
+  const [flash, setFlash] = useState(false);
 
   const persist = (patch: Parameters<typeof updateEvaluationFeedback>[1]) => {
     const updated = updateEvaluationFeedback(evaluationId, patch);
     if (updated) {
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      setWorkflow(userWorkflowFromRow(updated));
+      setOutcome(performanceToOutcomeStatus(updated.outcome.performance));
+      setFlash(true);
+      setTimeout(() => setFlash(false), 2000);
     }
   };
 
@@ -59,76 +64,59 @@ export function WhatHappenedNext({
         : "bg-neutral-100 text-neutral-700 hover:bg-neutral-200"
     }`;
 
+  const toggleWorkflow = (key: keyof UserWorkflow) => {
+    const next = { ...workflow, [key]: !workflow[key], saved: true };
+    if (key === "campaign_launched" && next.campaign_launched) {
+      next.contacted = true;
+      next.shortlisted = true;
+    } else if (key === "contacted" && next.contacted) {
+      next.shortlisted = true;
+    }
+    setWorkflow(next);
+    persist({ userWorkflow: next });
+  };
+
   return (
     <section className={compact ? "" : "insight-panel"}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-sm font-semibold text-neutral-900">What happened next?</p>
-        {saved && <span className="text-xs text-emerald-700">Saved</span>}
+        {flash && <span className="text-xs text-emerald-700">Saved</span>}
       </div>
       {!compact && (
         <p className="mt-1 text-xs text-neutral-500">
-          Optional — helps WorthyIQ learn which creators work for brands like yours.
+          Optional — a quick update helps WorthyIQ remember what works.
         </p>
       )}
 
-      <p className="mt-4 text-[11px] font-medium text-neutral-500">Pipeline</p>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {STATUS_CHIPS.map((c) => (
+      <div className="mt-4 flex flex-wrap gap-2">
+        {WORKFLOW_CHIPS.map((c) => (
           <button
-            key={c.status}
+            key={c.key}
             type="button"
-            className={chipClass(status === c.status)}
-            onClick={() => {
-              setStatus(c.status);
-              persist({ outcome: { status: c.status } });
-            }}
+            className={chipClass(workflow[c.key])}
+            onClick={() => toggleWorkflow(c.key)}
           >
             {c.label}
           </button>
         ))}
       </div>
 
-      <p className="mt-5 text-[11px] font-medium text-neutral-500">
-        Did you follow this recommendation?
-      </p>
+      <p className="mt-5 text-[11px] font-medium text-neutral-500">Campaign outcome</p>
       <div className="mt-2 flex flex-wrap gap-2">
-        {FOLLOW_CHIPS.map((f) => (
+        {OUTCOME_CHIPS.map((c) => (
           <button
-            key={f}
+            key={c.status}
             type="button"
-            className={chipClass(followed === f)}
+            className={chipClass(outcome === c.status)}
             onClick={() => {
-              setFollowed(f);
-              persist({ followedRecommendation: f });
+              setOutcome(c.status);
+              persist({ outcome: { performance: outcomeStatusToPerformance(c.status) } });
             }}
           >
-            {f}
+            {c.label}
           </button>
         ))}
       </div>
-
-      {showPerformance && (
-        <>
-          <p className="mt-5 text-[11px] font-medium text-neutral-500">
-            How did the campaign perform?
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {PERFORMANCE_CHIPS.map((p) => (
-              <button
-                key={p}
-                type="button"
-                className={chipClass(performance === p)}
-                onClick={() => {
-                  setPerformance(p);
-                  persist({ outcome: { performance: p } });
-                }}
-              >
-                {p}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
     </section>
   );
 }

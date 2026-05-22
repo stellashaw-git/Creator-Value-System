@@ -6,11 +6,12 @@ import { SiteHeader } from "@/components/site-header";
 import { Badge, toneFor } from "@/components/score-badge";
 import { campaignFitFromReport, campaignFitTone } from "@/lib/campaign-fit";
 import {
-  exportAllAsJSON,
   listEvaluations,
   pipelineStatusLabel,
+  userWorkflowFromRow,
   type SavedEvaluation,
 } from "@/lib/dataset";
+import { getMemoryAdapter } from "@/lib/memory";
 
 export default function SavedCreatorsPage() {
   const [rows, setRows] = useState<SavedEvaluation[] | null>(null);
@@ -22,7 +23,9 @@ export default function SavedCreatorsPage() {
   const count = rows?.length ?? 0;
 
   const handleExport = () => {
-    const blob = new Blob([exportAllAsJSON()], { type: "application/json" });
+    const blob = new Blob([getMemoryAdapter().exportIntelligence()], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -109,12 +112,16 @@ export default function SavedCreatorsPage() {
                           <Badge label={r.decision} tone={toneFor(r.decision)} />
                         </td>
                         <td className="px-4 py-4 text-xs font-medium text-neutral-700">
-                          {pipelineStatusLabel(row.outcome.status)}
-                          {row.followedRecommendation && (
-                            <span className="mt-0.5 block text-neutral-500">
-                              Rec: {row.followedRecommendation}
-                            </span>
-                          )}
+                          {(() => {
+                            const w = userWorkflowFromRow(row);
+                            const parts: string[] = [];
+                            if (w.shortlisted) parts.push("Shortlisted");
+                            if (w.contacted) parts.push("Contacted");
+                            if (w.campaign_launched) parts.push("Launched");
+                            return parts.length > 0
+                              ? parts.join(" · ")
+                              : pipelineStatusLabel(row.outcome.status);
+                          })()}
                         </td>
                         <td className="px-4 py-4 font-bold tabular-nums">{r.overallScore}</td>
                         <td className="px-4 py-4 text-xs text-neutral-500">

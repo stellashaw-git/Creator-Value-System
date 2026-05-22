@@ -6,6 +6,13 @@
  * the moat is the schema and the feedback loop, not the storage tech.
  */
 
+import {
+  DEFAULT_USER_WORKFLOW,
+  type OutcomeStatus,
+  type UserWorkflow,
+} from "./intelligence-types";
+import { queueIntelligenceSync } from "./intelligence-sync";
+import { logWorkflowEvent } from "./workflow-events";
 import type { Report } from "./types";
 
 export type CampaignStatus =
@@ -59,8 +66,45 @@ export interface SavedEvaluation {
   updatedAt: string; // ISO
   report: Report;
   outcome: CampaignOutcome;
+  userWorkflow?: UserWorkflow;
   /** Did the brand follow WorthyIQ's recommendation for this creator? */
   followedRecommendation?: FollowedRecommendation;
+}
+
+export function performanceToOutcomeStatus(
+  p?: CampaignOutcome["performance"]
+): OutcomeStatus {
+  if (p === "Strong") return "strong";
+  if (p === "OK") return "ok";
+  if (p === "Weak") return "weak";
+  return "unknown";
+}
+
+export function outcomeStatusToPerformance(
+  s: OutcomeStatus
+): CampaignOutcome["performance"] {
+  if (s === "strong") return "Strong";
+  if (s === "ok") return "OK";
+  if (s === "weak") return "Weak";
+  return "Unknown";
+}
+
+export function workflowToStatus(w: UserWorkflow): CampaignStatus {
+  if (w.campaign_launched) return "Campaign launched";
+  if (w.contacted) return "Contacted";
+  if (w.shortlisted) return "Shortlisted";
+  return "Not started";
+}
+
+export function userWorkflowFromRow(row: SavedEvaluation): UserWorkflow {
+  if (row.userWorkflow) return row.userWorkflow;
+  const s = row.outcome.status;
+  return {
+    saved: true,
+    shortlisted: s === "Shortlisted" || s === "In discussion",
+    contacted: s === "Contacted" || s === "In discussion",
+    campaign_launched: s === "Campaign launched" || s === "Completed",
+  };
 }
 
 const STORAGE_KEY = "worthyiq.evaluations.v1";
@@ -109,10 +153,20 @@ export function saveEvaluation(report: Report): SavedEvaluation {
     updatedAt: now,
     report,
     outcome: { status: "Not started" },
+    userWorkflow: { ...DEFAULT_USER_WORKFLOW },
   };
   const rows = readAll();
   rows.push(row);
   writeAll(rows);
+  logWorkflowEvent("creator_saved", {
+    evaluationId: row.id,
+    creatorName: report.input.name,
+  });
+  logWorkflowEvent("evaluation_completed", {
+    evaluationId: row.id,
+    creatorName: report.input.name,
+    meta: { decision: report.decision, score: report.overallScore },
+  });
   return row;
 }
 
@@ -125,6 +179,7 @@ export function updateOutcome(
 
 export interface EvaluationFeedbackPatch {
   outcome?: Partial<CampaignOutcome>;
+  userWorkflow?: Partial<UserWorkflow>;
   followedRecommendation?: FollowedRecommendation;
 }
 
@@ -136,9 +191,18 @@ export function updateEvaluationFeedback(
   const idx = rows.findIndex((r) => r.id === id);
   if (idx < 0) return undefined;
   const prev = rows[idx];
+  const workflow = patch.userWorkflow
+    ? { ...userWorkflowFromRow(prev), ...patch.userWorkflow }
+    : userWorkflowFromRow(prev);
+  const outcome = {
+    ...prev.outcome,
+    ...(patch.outcome ?? {}),
+    ...(patch.userWorkflow ? { status: workflowToStatus(workflow) } : {}),
+  };
   rows[idx] = {
     ...prev,
-    outcome: patch.outcome ? { ...prev.outcome, ...patch.outcome } : prev.outcome,
+    outcome,
+    userWorkflow: workflow,
     followedRecommendation:
       patch.followedRecommendation !== undefined
         ? patch.followedRecommendation
@@ -146,7 +210,36 @@ export function updateEvaluationFeedback(
     updatedAt: new Date().toISOString(),
   };
   writeAll(rows);
-  return rows[idx];
+  const row = getEvaluation(id);
+  if (!row) return undefined;
+  if (patch.userWorkflow?.shortlisted) {
+    logWorkflowEvent("creator_shortlisted", {
+      evaluationId: id,
+      creatorName: row.report.input.name,
+    });
+  }
+  if (patch.userWorkflow?.contacted) {
+    logWorkflowEvent("creator_contacted", {
+      evaluationId: id,
+      creatorName: row.report.input.name,
+    });
+  }
+  if (patch.userWorkflow?.campaign_launched) {
+    logWorkflowEvent("creator_launched", {
+      evaluationId: id,
+      creatorName: row.report.input.name,
+    });
+  }
+  if (patch.outcome?.performance) {
+    logWorkflowEvent("outcome_recorded", {
+      evaluationId: id,
+      creatorName: row.report.input.name,
+      meta: { performance: patch.outcome.performance },
+    });
+  }
+  const fresh = getEvaluation(id);
+  if (fresh) queueIntelligenceSync(fresh, "updated");
+  return fresh ?? row;
 }
 
 /** Short label for tables and chips */

@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { logWorkflowEvent } from "@/lib/workflow-events";
 import { SiteHeader } from "@/components/site-header";
 import { ReportCard } from "@/components/report-card";
 import { WhatHappenedNext } from "@/components/what-happened-next";
@@ -22,11 +23,22 @@ export default function SavedCreatorDetailPage() {
   const [notes, setNotes] = useState("");
   const [notesSaved, setNotesSaved] = useState<string | null>(null);
 
+  const loggedOpen = useRef(false);
+
   useEffect(() => {
     if (!id) return;
     const found = getEvaluation(id);
     setRow(found ?? null);
-    if (found) setNotes(found.outcome.notes ?? "");
+    if (found) {
+      setNotes(found.outcome.notes ?? "");
+      if (!loggedOpen.current) {
+        loggedOpen.current = true;
+        logWorkflowEvent("creator_reopened", {
+          evaluationId: id,
+          creatorName: found.report.input.name,
+        });
+      }
+    }
   }, [id]);
 
   const onSaveNotes = (e: React.FormEvent) => {
@@ -99,8 +111,7 @@ export default function SavedCreatorDetailPage() {
         <section className="card-quiet mt-6">
           <WhatHappenedNext
             evaluationId={row.id}
-            initialStatus={row.outcome.status}
-            initialFollowed={row.followedRecommendation}
+            initialWorkflow={row.userWorkflow}
             initialPerformance={row.outcome.performance}
           />
           <form onSubmit={onSaveNotes} className="mt-6 border-t border-neutral-100 pt-5">
