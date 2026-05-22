@@ -1,10 +1,12 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import type { IntelligenceRecord } from "@/lib/intelligence-schema";
 import type { WorkflowEvent } from "@/lib/workflow-events";
 
+export const runtime = "nodejs";
+/** Make must ACK quickly; Sheets runs after. Do not wait for full scenario. */
+const WEBHOOK_TIMEOUT_MS = 4_000;
+
 const LOG_PREFIX = "[intelligence/sync]";
-/** Make should ACK webhooks in <1s; we only wait this long in background. */
-const WEBHOOK_TIMEOUT_MS = 8_000;
 
 type RecordPayload = {
   kind: "record";
@@ -71,11 +73,13 @@ function buildWebhookBody(payload: SyncBody): Record<string, unknown> {
   const base: Record<string, unknown> = {
     source: "worthyiq-intelligence",
     submittedAt: new Date().toISOString(),
-    ...payload,
+    kind: payload.kind,
   };
   if (payload.kind === "record") {
     const ev = payload.record.creator_evaluation;
     const wf = payload.record.user_workflow;
+    base.reason = payload.reason;
+    base.record = payload.record;
     base.timestamp = payload.record.updated_at;
     base.creator_name = ev.creator_name;
     base.recommendation = ev.recommendation;
@@ -90,6 +94,8 @@ function buildWebhookBody(payload: SyncBody): Record<string, unknown> {
     base.contacted = wf.contacted;
     base.campaign_launched = wf.campaign_launched;
     base.sync_source = payload.source ?? "evaluation";
+  } else {
+    base.event = payload.event;
   }
   return base;
 }
@@ -110,11 +116,7 @@ async function forwardToWebhook(
         Accept: "application/json",
         ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
       },
-      body: JSON.stringify({
-        source: "worthyiq-intelligence",
-        submittedAt: new Date().toISOString(),
-        ...payload,
-      }),
+      body: JSON.stringify(buildWebhookBody(payload)),
       signal: controller.signal,
     });
 
@@ -134,7 +136,7 @@ async function forwardToWebhook(
     const message =
       err instanceof Error
         ? err.name === "AbortError"
-          ? `Webhook timed out after ${WEBHOOK_TIMEOUT_MS}ms`
+          ? `Make ACK timed out after ${WEBHOOK_TIMEOUT_MS}ms (data may still arrive — set webhook to respond Immediately)`
           : err.message
         : "Unknown webhook error";
     console.error(`${LOG_PREFIX} webhook forward failed:`, message);
@@ -162,7 +164,6 @@ export async function POST(req: Request) {
       console.log(`${LOG_PREFIX} Webhook URL missing`);
     }
 
-    console.log(`${LOG_PREFIX} payload kind:`, body.kind);
     if (body.kind === "record") {
       const ev = body.record.creator_evaluation;
       console.log(`${LOG_PREFIX} sync record:`, {
@@ -176,61 +177,50 @@ export async function POST(req: Request) {
     }
 
     if (!webhook) {
-      const response = {
-        ok: true as const,
+      return NextResponse.json({
+        ok: true,
         synced: false,
         webhookConfigured: false,
         channel: null,
-        message: "INTELLIGENCE_WEBHOOK_URL is not set in web/.env.local",
-      };
-      console.log(`${LOG_PREFIX} response:`, JSON.stringify(response));
-      return NextResponse.json(response);
+        message: "Set INTELLIGENCE_WEBHOOK_URL in Vercel env vars (or web/.env.local).",
+      });
     }
 
     if (body.kind === "record" && body.source === "evaluation") {
       const name = body.record.creator_evaluation.creator_name;
       if (name === "MAKE_CONNECTION_PING" || name === "Webhook Test Creator") {
-        console.error(`${LOG_PREFIX} refused test creator on evaluation sync:`, name);
         return NextResponse.json(
-          {
-            error: `Invalid evaluation sync (${name}). Run a real creator evaluation.`,
-          },
+          { error: `Invalid evaluation sync (${name}).` },
           { status: 400 }
         );
       }
     }
 
     if (body.kind === "record" && body.devTest) {
-      const response = {
-        ok: true as const,
+      return NextResponse.json({
+        ok: true,
         synced: false,
-        webhookConfigured: true,
         devTest: true,
-        channel: null,
-        message: "Dev test payload not sent to Make (use a real evaluation to sync).",
-      };
-      console.log(`${LOG_PREFIX} response:`, JSON.stringify(response));
-      return NextResponse.json(response);
+        message: "Dev test not sent to Make. Use Ping Make or a real evaluation.",
+      });
     }
 
-    console.log(`${LOG_PREFIX} forwarding to Make now`);
-    const result = await forwardToWebhook(webhook, body);
-    console.log(`${LOG_PREFIX} forward result:`, JSON.stringify(result));
+    // Respond immediately; forward in background (works on Vercel via after()).
+    after(async () => {
+      console.log(`${LOG_PREFIX} background forward started`);
+      const result = await forwardToWebhook(webhook, body);
+      console.log(`${LOG_PREFIX} background forward result:`, JSON.stringify(result));
+    });
 
-    const response = {
-      ok: true as const,
-      synced: result.synced,
+    return NextResponse.json({
+      ok: true,
+      synced: true,
+      webhookQueued: true,
       webhookConfigured: true,
-      channel: "webhook" as const,
-      ...(result.status !== undefined ? { webhookStatus: result.status } : {}),
-      ...(result.error ? { webhookError: result.error } : {}),
-      message: result.synced
-        ? "Make webhook accepted the request."
-        : "Forward to Make failed — see webhookError and server logs.",
-    };
-
-    console.log(`${LOG_PREFIX} response:`, JSON.stringify(response));
-    return NextResponse.json(response);
+      channel: "webhook",
+      message:
+        "Dispatched to Make. Keep scenario ON — Run once only listens ~2 min for a manual test.",
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Intelligence sync failed.";
     console.error(`${LOG_PREFIX} route error:`, message);

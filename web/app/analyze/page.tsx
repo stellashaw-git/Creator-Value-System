@@ -313,10 +313,8 @@ export default function AnalyzePage() {
       }
       const saved = saveEvaluation(json.report);
       setReport(json.report);
-      const sync = await syncIntelligenceRecord(saved, json.report, "created");
-      if (!sync.synced) {
-        console.warn("[analyze] Make sync did not complete:", sync);
-      }
+      // Non-blocking — API returns instantly; Make runs in background.
+      void syncIntelligenceRecord(saved, json.report, "created");
       incrementTrialUsage();
       setUsageRefresh((k) => k + 1);
       setSavedId(saved.id);
