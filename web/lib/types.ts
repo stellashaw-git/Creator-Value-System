@@ -43,8 +43,19 @@ export interface AnalyzeInput {
   /** Optional inputs used to derive engagementRate. */
   averageLikes?: number;
   averageComments?: number;
+  averageReposts?: number;
+  averageShares?: number;
+  averageSaves?: number;
   /** Optional; with current followers yields growthRate30d. */
   followers30DaysAgo?: number;
+  /** Tags from screenshot upload (Profile, Recent Post, …). */
+  screenshotTypesUploaded?: string[];
+  /** Auto-suggested labels at upload time (before user edits). */
+  screenshotTypesDetected?: string[];
+  engagementComponentsUsed?: string[];
+  detectedPlatform?: string;
+  platformConfidence?: "high" | "medium" | "low";
+  platformOverride?: string;
   comments: string[];
   /** Brand vertical (optional campaign context). */
   brandCategory?: string;
@@ -90,6 +101,13 @@ export interface NextAction {
   priority: ActionPriority;
 }
 
+export interface SignalInsights {
+  engagementQuality: string;
+  spreadSignal: string;
+  repostShareSignal: string;
+  dataCompleteness: string;
+}
+
 export interface Report {
   input: AnalyzeInput;
 
@@ -121,6 +139,8 @@ export interface Report {
   memo: DecisionMemo;
   outreach: OutreachMessages;
   nextActions: NextAction[];
+
+  signalInsights?: SignalInsights;
 
   // Meta
   mode: "openai" | "rule_based";

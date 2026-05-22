@@ -94,6 +94,22 @@ function buildWebhookBody(payload: SyncBody): Record<string, unknown> {
     base.contacted = wf.contacted;
     base.campaign_launched = wf.campaign_launched;
     base.sync_source = payload.source ?? "evaluation";
+    base.likes_count = ev.likes_count ?? null;
+    base.comments_count = ev.comments_count ?? null;
+    base.reposts_count = ev.reposts_count ?? null;
+    base.shares_count = ev.shares_count ?? null;
+    base.saves_count = ev.saves_count ?? null;
+    base.views_count = ev.views_count ?? null;
+    base.basic_engagement_rate = ev.basic_engagement_rate ?? null;
+    base.expanded_engagement_rate = ev.expanded_engagement_rate ?? null;
+    base.share_rate = ev.share_rate ?? null;
+    base.engagement_components_used = ev.engagement_components_used ?? [];
+    base.screenshot_types_uploaded = ev.screenshot_types_uploaded ?? [];
+    base.data_completeness = ev.data_completeness ?? null;
+    base.detected_platform = ev.detected_platform ?? null;
+    base.platform_confidence = ev.platform_confidence ?? null;
+    base.platform_override = ev.platform_override ?? null;
+    base.screenshot_types_detected = ev.screenshot_types_detected ?? [];
   } else {
     base.event = payload.event;
   }

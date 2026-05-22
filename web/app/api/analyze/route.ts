@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { computeEngagementMetrics } from "@/lib/engagement-metrics";
 import { parseNonNegativeNumber } from "@/lib/parse-numeric-input";
 import { buildReport } from "@/lib/scoring";
 import { enhanceWithAI } from "@/lib/openai";
@@ -50,19 +51,28 @@ function parseInput(raw: unknown): AnalyzeInput {
 
   const averageLikes = optionalNonnegParsed(b.averageLikes, "averageLikes");
   const averageComments = optionalNonnegParsed(b.averageComments, "averageComments");
+  const averageReposts = optionalNonnegParsed(b.averageReposts, "averageReposts");
+  const averageShares = optionalNonnegParsed(b.averageShares, "averageShares");
+  const averageSaves = optionalNonnegParsed(b.averageSaves, "averageSaves");
   const followers30DaysAgo = optionalNonnegParsed(b.followers30DaysAgo, "followers30DaysAgo");
 
-  let engagementRate: number | undefined;
-  if (
-    averageLikes !== undefined &&
-    averageComments !== undefined &&
-    followers > 0
-  ) {
-    engagementRate = Math.min(1, (averageLikes + averageComments) / followers);
-  } else {
-    const raw = b.engagementRate;
-    if (raw !== undefined && raw !== null && raw !== "") {
-      const er0 = typeof raw === "number" ? raw : Number(raw);
+  const metrics = computeEngagementMetrics({
+    followers,
+    averageLikes,
+    averageComments,
+    averageReposts,
+    averageShares,
+    averageSaves,
+    averageViews: avgViews > 0 ? avgViews : undefined,
+  });
+
+  let engagementRate: number | undefined =
+    metrics.expandedEngagementRate ?? metrics.basicEngagementRate ?? undefined;
+
+  if (engagementRate === undefined) {
+    const rawEr = b.engagementRate;
+    if (rawEr !== undefined && rawEr !== null && rawEr !== "") {
+      const er0 = typeof rawEr === "number" ? rawEr : Number(rawEr);
       if (Number.isFinite(er0) && er0 >= 0 && er0 <= 1) engagementRate = er0;
     }
   }
@@ -97,6 +107,32 @@ function parseInput(raw: unknown): AnalyzeInput {
     ? (campaignGoalRaw as CampaignGoal)
     : undefined;
 
+  const screenshotTypesUploaded = Array.isArray(b.screenshotTypesUploaded)
+    ? b.screenshotTypesUploaded.map((x) => String(x)).filter(Boolean)
+    : undefined;
+
+  const screenshotTypesDetected = Array.isArray(b.screenshotTypesDetected)
+    ? b.screenshotTypesDetected.map((x) => String(x)).filter(Boolean)
+    : undefined;
+
+  const detectedPlatform =
+    typeof b.detectedPlatform === "string" && b.detectedPlatform.trim()
+      ? b.detectedPlatform.trim()
+      : undefined;
+
+  const platformOverride =
+    typeof b.platformOverride === "string" && b.platformOverride.trim()
+      ? b.platformOverride.trim()
+      : undefined;
+
+  const platformConfidenceRaw = b.platformConfidence;
+  const platformConfidence =
+    platformConfidenceRaw === "high" ||
+    platformConfidenceRaw === "medium" ||
+    platformConfidenceRaw === "low"
+      ? platformConfidenceRaw
+      : undefined;
+
   return {
     name,
     platform,
@@ -107,7 +143,16 @@ function parseInput(raw: unknown): AnalyzeInput {
     growthRate30d,
     averageLikes,
     averageComments,
+    averageReposts,
+    averageShares,
+    averageSaves,
     followers30DaysAgo,
+    engagementComponentsUsed: metrics.engagementComponentsUsed,
+    screenshotTypesUploaded,
+    screenshotTypesDetected,
+    detectedPlatform,
+    platformConfidence,
+    platformOverride,
     comments,
     brandCategory,
     campaignGoal,
@@ -125,10 +170,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Deterministic scoring always runs.
   const base = buildReport(input);
-
-  // Optional: enhance prose with OpenAI if the key is set. Falls back silently.
   const report = await enhanceWithAI(base);
 
   return NextResponse.json({ report });

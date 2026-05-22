@@ -5,6 +5,10 @@
  */
 
 import { campaignFitFromReport } from "./campaign-fit";
+import {
+  computeEngagementMetrics,
+  dataCompletenessScore,
+} from "./engagement-metrics";
 import type { SavedEvaluation } from "./dataset";
 import {
   userWorkflowFromRow,
@@ -38,6 +42,22 @@ export interface CreatorEvaluationSnapshot {
   timestamp: string;
   brand_category?: string;
   campaign_goal?: string;
+  likes_count?: number | null;
+  comments_count?: number | null;
+  reposts_count?: number | null;
+  shares_count?: number | null;
+  saves_count?: number | null;
+  views_count?: number | null;
+  basic_engagement_rate?: number | null;
+  expanded_engagement_rate?: number | null;
+  share_rate?: number | null;
+  engagement_components_used?: string[];
+  screenshot_types_uploaded?: string[];
+  screenshot_types_detected?: string[];
+  data_completeness?: number | null;
+  detected_platform?: string | null;
+  platform_confidence?: string | null;
+  platform_override?: string | null;
 }
 
 /** Full intelligence record for export / future persistence. */
@@ -60,6 +80,20 @@ export function snapshotFromReport(
   row: SavedEvaluation
 ): CreatorEvaluationSnapshot {
   const { input, report } = { input: row.report.input, report: row.report };
+  const metrics = computeEngagementMetrics({
+    followers: input.followers,
+    averageLikes: input.averageLikes,
+    averageComments: input.averageComments,
+    averageReposts: input.averageReposts,
+    averageShares: input.averageShares,
+    averageSaves: input.averageSaves,
+    averageViews: input.avgViews > 0 ? input.avgViews : undefined,
+  });
+  const completenessComponents = [
+    ...metrics.engagementComponentsUsed,
+    input.followers > 0 ? "followers" : "",
+  ].filter(Boolean);
+
   return {
     evaluation_id: row.id,
     creator_name: input.name,
@@ -76,6 +110,23 @@ export function snapshotFromReport(
     timestamp: row.createdAt,
     brand_category: input.brandCategory,
     campaign_goal: input.campaignGoal,
+    likes_count: input.averageLikes ?? null,
+    comments_count: input.averageComments ?? null,
+    reposts_count: input.averageReposts ?? null,
+    shares_count: input.averageShares ?? null,
+    saves_count: input.averageSaves ?? null,
+    views_count: input.avgViews > 0 ? input.avgViews : null,
+    basic_engagement_rate: metrics.basicEngagementRate,
+    expanded_engagement_rate: metrics.expandedEngagementRate,
+    share_rate: metrics.shareRate,
+    engagement_components_used:
+      input.engagementComponentsUsed ?? metrics.engagementComponentsUsed,
+    screenshot_types_uploaded: input.screenshotTypesUploaded,
+    screenshot_types_detected: input.screenshotTypesDetected,
+    data_completeness: dataCompletenessScore(completenessComponents),
+    detected_platform: input.detectedPlatform ?? input.platform,
+    platform_confidence: input.platformConfidence ?? null,
+    platform_override: input.platformOverride ?? null,
   };
 }
 

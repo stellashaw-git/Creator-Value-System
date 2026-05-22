@@ -3,6 +3,8 @@
  * Side-effect free. Same function shape used by the API route.
  */
 
+import { computeEngagementMetrics } from "./engagement-metrics";
+import { buildSignalInsights, spreadMemoLine } from "./signal-insights";
 import type {
   Action,
   AnalyzeInput,
@@ -83,11 +85,18 @@ function commentIntentAnalysis(comments: string[]): CommentIntent {
 }
 
 export function isEngagementKnown(input: AnalyzeInput): boolean {
-  return (
+  if (
     typeof input.engagementRate === "number" &&
     Number.isFinite(input.engagementRate) &&
     input.engagementRate >= 0
-  );
+  ) {
+    return true;
+  }
+  const hasLikes =
+    typeof input.averageLikes === "number" && input.averageLikes >= 0;
+  const hasComments =
+    typeof input.averageComments === "number" && input.averageComments >= 0;
+  return hasLikes && hasComments;
 }
 
 export function isGrowthKnown(input: AnalyzeInput): boolean {
@@ -100,7 +109,20 @@ function impliedEngagementRate(avgViews: number, followers: number): number {
 }
 
 function scoringEngagementRate(input: AnalyzeInput): number {
-  if (isEngagementKnown(input)) return Math.min(1, Math.max(0, input.engagementRate!));
+  const computed = computeEngagementMetrics({
+    followers: input.followers,
+    averageLikes: input.averageLikes,
+    averageComments: input.averageComments,
+    averageReposts: input.averageReposts,
+    averageShares: input.averageShares,
+    averageSaves: input.averageSaves,
+    averageViews: input.avgViews > 0 ? input.avgViews : undefined,
+  });
+  const er =
+    computed.expandedEngagementRate ??
+    computed.basicEngagementRate ??
+    (isEngagementKnown(input) ? input.engagementRate : undefined);
+  if (typeof er === "number" && Number.isFinite(er)) return Math.min(1, Math.max(0, er));
   return impliedEngagementRate(input.avgViews, input.followers);
 }
 
@@ -336,9 +358,10 @@ function buildMemo(report: {
     ? `${(input.followers / 1_000_000).toFixed(1)}M`
     : `${Math.round(input.followers / 1000)}K`;
 
-  const erPct = isEngagementKnown(input)
-    ? `${(input.engagementRate! * 100).toFixed(1)}%`
-    : "limited engagement inputs (likes + comments per follower not provided together)";
+  const erPct =
+    isEngagementKnown(input) || input.engagementComponentsUsed?.length
+      ? `${(scoringEngagementRate(input) * 100).toFixed(1)}%`
+      : "limited engagement inputs (add post screenshots for likes, comments, shares)";
   const growthPct = isGrowthKnown(input) ? `${Math.round(input.growthRate30d! * 100)}%` : "unknown";
 
   // Executive summary
@@ -369,6 +392,10 @@ function buildMemo(report: {
     upsideDrivers.push(`+${growthPct} 30-day growth widens the audience ceiling fast`);
   }
   if (brandFitScore >= 60) upsideDrivers.push(`${brandFitScore}/100 brand-fit score signals a natural commercial alignment`);
+  const spreadLine = spreadMemoLine(input);
+  if (spreadLine && !spreadLine.startsWith("Share/repost data not")) {
+    upsideDrivers.push(spreadLine.replace(/\.$/, ""));
+  }
   const commercialUpside = upsideDrivers.length > 0
     ? `The commercial upside concentrates in ${upsideDrivers.length} dimension${upsideDrivers.length > 1 ? "s" : ""}: ${upsideDrivers.join("; ")}. Together, these are the levers brands price into deal value.`
     : `Commercial upside is muted at the moment — the standout pillars haven't separated from the tier baseline. Watch the next 30 days for one dimension to break out.`;
@@ -547,11 +574,31 @@ function buildNextActions(decision: Decision, growth: number, intent: number, ha
 // ---------- Top-level pipeline ----------
 
 export function buildReport(input: AnalyzeInput, mode: "openai" | "rule_based" = "rule_based"): Report {
-  const commentIntent = commentIntentAnalysis(input.comments);
-  const erS = scoringEngagementRate(input);
-  const grS = scoringGrowthRate(input);
-  const engagement = engagementScore(erS, input.avgViews, input.followers);
-  const reach = reachScore(input.followers, input.avgViews);
+  const metrics = computeEngagementMetrics({
+    followers: input.followers,
+    averageLikes: input.averageLikes,
+    averageComments: input.averageComments,
+    averageReposts: input.averageReposts,
+    averageShares: input.averageShares,
+    averageSaves: input.averageSaves,
+    averageViews: input.avgViews > 0 ? input.avgViews : undefined,
+  });
+  const inputEnriched: AnalyzeInput = {
+    ...input,
+    engagementRate:
+      input.engagementRate ??
+      metrics.expandedEngagementRate ??
+      metrics.basicEngagementRate ??
+      undefined,
+    engagementComponentsUsed:
+      input.engagementComponentsUsed ?? metrics.engagementComponentsUsed,
+  };
+
+  const commentIntent = commentIntentAnalysis(inputEnriched.comments);
+  const erS = scoringEngagementRate(inputEnriched);
+  const grS = scoringGrowthRate(inputEnriched);
+  const engagement = engagementScore(erS, inputEnriched.avgViews, inputEnriched.followers);
+  const reach = reachScore(inputEnriched.followers, inputEnriched.avgViews);
   const growth = growthScore(grS);
   const intent = intentScore(commentIntent);
 
@@ -560,24 +607,37 @@ export function buildReport(input: AnalyzeInput, mode: "openai" | "rule_based" =
   );
 
   const monetization = monetizationVerdict(overallScore, intent, reach);
-  const growthSec = growthSignal(growth, isGrowthKnown(input) ? input.growthRate30d : undefined);
+  const growthSec = growthSignal(
+    growth,
+    isGrowthKnown(inputEnriched) ? inputEnriched.growthRate30d : undefined
+  );
   const engagementSec = engagementQuality(
     engagement,
-    isEngagementKnown(input) ? input.engagementRate : undefined,
+    isEngagementKnown(inputEnriched) ? inputEnriched.engagementRate : undefined,
     erS
   );
   const gap = trafficVsMonetizationGap(reach, intent);
-  const fit = brandFit(input.niche, intent, reach, input.brandCategory);
+  const fit = brandFit(
+    inputEnriched.niche,
+    intent,
+    reach,
+    inputEnriched.brandCategory
+  );
   const { decision, rationale } = finalDecision(overallScore, engagement, growth, intent);
-  const { confidence, reason: confidenceReason } = decisionConfidence(
+  let { confidence, reason: confidenceReason } = decisionConfidence(
     decision,
     [engagement, reach, growth, intent],
     commentIntent.total
   );
+  const metricCoverage = inputEnriched.engagementComponentsUsed?.length ?? 0;
+  if (metricCoverage < 2 && confidence === "High") {
+    confidence = "Medium";
+    confidenceReason += " Partial engagement metrics — confidence adjusted slightly.";
+  }
   const action = recommendedAction(decision, growth);
 
   const memo = buildMemo({
-    input,
+    input: inputEnriched,
     overall: overallScore,
     pillars: { engagement, reach, growth, intent },
     commentIntent,
@@ -585,11 +645,17 @@ export function buildReport(input: AnalyzeInput, mode: "openai" | "rule_based" =
     gap: gap.label,
     brandFitScore: fit.score,
   });
-  const outreach = buildOutreach(input, decision);
-  const nextActions = buildNextActions(decision, growth, intent, input.comments.length > 0);
+  const outreach = buildOutreach(inputEnriched, decision);
+  const nextActions = buildNextActions(
+    decision,
+    growth,
+    intent,
+    inputEnriched.comments.length > 0
+  );
+  const signalInsights = buildSignalInsights(inputEnriched);
 
   return {
-    input,
+    input: inputEnriched,
     overallScore,
     pillarScores: { engagement, reach, growth, intent },
     monetization,
@@ -606,6 +672,7 @@ export function buildReport(input: AnalyzeInput, mode: "openai" | "rule_based" =
     memo,
     outreach,
     nextActions,
+    signalInsights,
     mode,
   };
 }

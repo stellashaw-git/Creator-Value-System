@@ -69,34 +69,66 @@ function CommercialPotential({ report }: { report: Report }) {
 
 function KeySignals({ report }: { report: Report }) {
   const { input } = report;
-  const items = [
-    {
-      label: PILLAR_LABELS.engagement,
-      headline: report.engagement.label,
-      detail: isEngagementKnown(input) ? pct(input.engagementRate!) : "Limited data",
-      score: report.pillarScores.engagement,
-    },
-    {
-      label: PILLAR_LABELS.growth,
-      headline: report.growth.label,
-      detail: isGrowthKnown(input)
-        ? `+${Math.round(input.growthRate30d! * 100)}% / 30d`
-        : "Unknown",
-      score: report.pillarScores.growth,
-    },
-    {
-      label: PILLAR_LABELS.intent,
-      headline: report.monetization.label,
-      detail: `${report.pillarScores.intent}/100 intent`,
-      score: report.pillarScores.intent,
-    },
-    {
-      label: "Brand fit",
-      headline: `${report.brandFit.score}/100`,
-      detail: input.brandCategory || "Niche-native",
-      score: report.brandFit.score,
-    },
-  ];
+  const insights = report.signalInsights;
+  const items = insights
+    ? [
+        {
+          label: "Engagement quality",
+          headline: report.engagement.label,
+          detail: insights.engagementQuality,
+          score: report.pillarScores.engagement,
+        },
+        {
+          label: "Spread signal",
+          headline:
+            (input.averageShares ?? 0) > 0 ? "Visible" : "Limited",
+          detail: insights.spreadSignal,
+          score: report.pillarScores.reach,
+        },
+        {
+          label: "Repost / share",
+          headline:
+            (input.averageReposts ?? 0) > 0 || (input.averageShares ?? 0) > 0
+              ? "Active"
+              : "N/A",
+          detail: insights.repostShareSignal,
+          score: report.pillarScores.engagement,
+        },
+        {
+          label: "Data completeness",
+          headline: insights.dataCompleteness.split(" — ")[0] ?? "Moderate",
+          detail: insights.dataCompleteness,
+          score: report.overallScore,
+        },
+      ]
+    : [
+        {
+          label: PILLAR_LABELS.engagement,
+          headline: report.engagement.label,
+          detail: isEngagementKnown(input) ? pct(input.engagementRate!) : "Limited data",
+          score: report.pillarScores.engagement,
+        },
+        {
+          label: PILLAR_LABELS.growth,
+          headline: report.growth.label,
+          detail: isGrowthKnown(input)
+            ? `+${Math.round(input.growthRate30d! * 100)}% / 30d`
+            : "Unknown",
+          score: report.pillarScores.growth,
+        },
+        {
+          label: PILLAR_LABELS.intent,
+          headline: report.monetization.label,
+          detail: `${report.pillarScores.intent}/100 intent`,
+          score: report.pillarScores.intent,
+        },
+        {
+          label: "Brand fit",
+          headline: `${report.brandFit.score}/100`,
+          detail: input.brandCategory || "Niche-native",
+          score: report.brandFit.score,
+        },
+      ];
 
   return (
     <section>
