@@ -10,7 +10,7 @@ Manual workflow (no scraping):
   - User pastes 3 recent post/reel links
   - Optionally: follower count, avg views, niche, and recent comments
 
-Run: streamlit run app.py
+Run: streamlit run streamlit_app.py
 """
 
 from __future__ import annotations

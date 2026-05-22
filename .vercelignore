@@ -1,0 +1,8 @@
+# Streamlit prototype at repo root — production is web/ (Next.js)
+streamlit_app.py
+requirements.txt
+pages/
+llm_comment_analysis.py
+scoring.py
+*.pyc
+__pycache__/

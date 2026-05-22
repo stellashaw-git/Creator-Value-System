@@ -19,7 +19,7 @@ This **Creator Monetization Copilot** uses sample CSVs under `datasets/` and opt
 ```bash
 cd creator-intelligence-mvp
 pip install -r requirements.txt
-streamlit run app.py
+streamlit run streamlit_app.py
 ```
 
 ### Environment (optional)
