@@ -2,29 +2,45 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { canRunFreeEvaluation } from "@/lib/trial";
+import { useMounted } from "@/lib/use-mounted";
+import {
+  canRunFreeEvaluation,
+  getTrialUsage,
+  isDevEvaluationLimitBypassed,
+} from "@/lib/trial";
 
-/** Shown only after the free evaluation limit — no counter on first load. */
+/** Lightweight banner after free limit — not a hard enterprise paywall. */
 export function TrialPaywall({ refreshKey = 0 }: { refreshKey?: number }) {
+  const mounted = useMounted();
   const [atLimit, setAtLimit] = useState(false);
+  const [founding, setFounding] = useState(false);
 
   useEffect(() => {
+    if (!mounted) return;
+    if (isDevEvaluationLimitBypassed()) {
+      setAtLimit(false);
+      setFounding(false);
+      return;
+    }
+    const usage = getTrialUsage();
+    setFounding(usage.early_access_submitted);
     setAtLimit(!canRunFreeEvaluation());
-  }, [refreshKey]);
+  }, [refreshKey, mounted]);
 
-  if (!atLimit) return null;
+  if (!mounted) return null;
+  if (isDevEvaluationLimitBypassed() || !atLimit || founding) return null;
 
   return (
-    <div className="mt-8 rounded-2xl border border-neutral-200/80 bg-gradient-to-b from-neutral-900 to-neutral-800 p-6 text-white shadow-lg sm:p-8">
-      <p className="text-sm font-medium text-neutral-300">
-        You&apos;ve reached today&apos;s free creator evaluations.
+    <div className="mt-8 rounded-2xl border border-neutral-200/80 bg-neutral-50/90 px-5 py-5 sm:px-6">
+      <p className="text-sm font-medium text-neutral-900">
+        You&apos;ve used your free evaluations.
       </p>
-      <p className="mt-2 max-w-md text-sm leading-relaxed text-neutral-400">
-        Join early access to continue evaluating creators and unlock creator comparison.
+      <p className="mt-1.5 max-w-md text-sm leading-relaxed text-neutral-500">
+        Join the founding user group for expanded access and early features.
       </p>
       <Link
         href="/waitlist"
-        className="mt-5 inline-flex rounded-lg bg-white px-5 py-2.5 text-sm font-semibold text-neutral-900 transition hover:bg-neutral-100"
+        className="mt-4 inline-flex rounded-lg bg-neutral-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
       >
         Join Early Access
       </Link>

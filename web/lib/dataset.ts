@@ -14,6 +14,7 @@ import {
 import { queueIntelligenceSync } from "./intelligence-sync";
 import { logWorkflowEvent } from "./workflow-events";
 import type { Report } from "./types";
+import { queueCloudEvaluationSync } from "./cloud-evaluations";
 
 export type CampaignStatus =
   | "Not started"
@@ -167,6 +168,7 @@ export function saveEvaluation(report: Report): SavedEvaluation {
     creatorName: report.input.name,
     meta: { decision: report.decision, score: report.overallScore },
   });
+  queueCloudEvaluationSync(row);
   return row;
 }
 
@@ -239,6 +241,7 @@ export function updateEvaluationFeedback(
   }
   const fresh = getEvaluation(id);
   if (fresh) queueIntelligenceSync(fresh, "updated");
+  if (fresh) queueCloudEvaluationSync(fresh);
   return fresh ?? row;
 }
 

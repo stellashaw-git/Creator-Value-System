@@ -4,11 +4,16 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ReportCard } from "@/components/report-card";
 import { AgentThinking } from "@/components/agent-thinking";
+import { PasteLinkPanel, isUrlIntakeEnabled } from "@/components/intake/paste-link-panel";
 import { ScreenshotUpload } from "@/components/screenshot-upload";
+import { intakeProfileToAnalyzeHints, mockIntakeProfile } from "@/lib/intake/to-analyze-payload";
 import { TrialPaywall } from "@/components/trial-paywall";
+import { TrialUsageHint } from "@/components/trial-usage-hint";
+import { EarlyAccessModal } from "@/components/early-access-modal";
 import { WebhookSyncDevTest } from "@/components/webhook-sync-dev-test";
 import { saveEvaluation } from "@/lib/dataset";
 import { syncIntelligenceRecord } from "@/lib/intelligence-sync";
+import { useMounted } from "@/lib/use-mounted";
 import { canRunFreeEvaluation, incrementTrialUsage } from "@/lib/trial";
 import type {
   ExtractedSignals,
@@ -16,11 +21,16 @@ import type {
   ExtractionMode,
 } from "@/lib/extract";
 import { labelDisplayName } from "@/lib/extract";
+import type { RecentPostMetricRow } from "@/lib/recent-post-aggregate";
 import {
   computeEngagementMetrics,
   engagementDisplayFromMetrics,
 } from "@/lib/engagement-metrics";
 import { parseNonNegativeNumber } from "@/lib/parse-numeric-input";
+import {
+  logExtractionFormMapping,
+  mapExtractionToFormPatch,
+} from "@/lib/extraction-form-map";
 import {
   BRAND_CATEGORY_TAGS,
   CAMPAIGN_GOALS,
@@ -114,8 +124,11 @@ export default function AnalyzePage() {
   const [usageRefresh, setUsageRefresh] = useState(0);
   const [atLimit, setAtLimit] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  const mounted = useMounted();
 
   const [name, setName] = useState("");
+  const [creatorHandle, setCreatorHandle] = useState<string | undefined>();
+  const [displayName, setDisplayName] = useState<string | undefined>();
   const [platform, setPlatform] = useState<Platform>("Instagram");
   const [niche, setNiche] = useState<Niche>("Beauty");
   const [followers, setFollowers] = useState("");
@@ -128,12 +141,15 @@ export default function AnalyzePage() {
   const [followers30DaysAgo, setFollowers30DaysAgo] = useState("");
   const [screenshotTypesUploaded, setScreenshotTypesUploaded] = useState<string[]>([]);
   const [screenshotTypesDetected, setScreenshotTypesDetected] = useState<string[]>([]);
+  const [recentPostMetrics, setRecentPostMetrics] = useState<RecentPostMetricRow[]>([]);
+  const [recentPostCount, setRecentPostCount] = useState(0);
   const [detectedPlatform, setDetectedPlatform] = useState<string | undefined>();
   const [platformConfidence, setPlatformConfidence] = useState<
     "high" | "medium" | "low" | undefined
   >();
   const [platformOverride, setPlatformOverride] = useState<string | undefined>();
   const [platformFromScreenshots, setPlatformFromScreenshots] = useState(false);
+  const [profileDetailsNote, setProfileDetailsNote] = useState<string | null>(null);
   const [brandCategory, setBrandCategory] = useState<BrandCategoryTag | "">("");
   const [campaignGoal, setCampaignGoal] = useState<CampaignGoal | "">("");
   const [comments, setComments] = useState("");
@@ -179,8 +195,9 @@ export default function AnalyzePage() {
   };
 
   useEffect(() => {
+    if (!mounted) return;
     setAtLimit(!canRunFreeEvaluation());
-  }, [usageRefresh]);
+  }, [usageRefresh, mounted]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -213,15 +230,48 @@ export default function AnalyzePage() {
     _mode: ExtractionMode,
     meta: ExtractionMeta
   ) => {
-    if (data.creator_name) setName(data.creator_name);
+    const avgCommentsBefore = averageComments;
     const resolved =
       meta.platformOverride ??
       meta.detectedPlatform ??
       (data.platform && (PLATFORMS as string[]).includes(data.platform)
         ? (data.platform as Platform)
         : null);
-    if (resolved) {
-      setPlatform(resolved);
+
+    const finalTypes = meta.finalTypes ?? meta.labels;
+
+    const patch = mapExtractionToFormPatch(data, {
+      platforms: PLATFORMS,
+      niches: NICHES,
+      resolvedPlatform: resolved,
+      finalTypes,
+      current: { name, followers, averageComments },
+    });
+
+    logExtractionFormMapping(data, patch, {
+      avgCommentsBefore,
+      finalTypes,
+      classifications: meta.typeDetections?.map((det, i) => ({
+        filename: `screenshot_${i + 1}`,
+        detectedType: det.auto_detected_type,
+        finalType: finalTypes[i] ?? det.auto_detected_type,
+        typeUsedForExtraction: finalTypes[i] ?? det.auto_detected_type,
+      })),
+    });
+
+    const applyIfEmpty = (value: string | undefined, current: string, set: (v: string) => void) => {
+      if (value !== undefined && value !== "" && !current.trim()) set(value);
+    };
+
+    const applyExtracted = (value: string | undefined, set: (v: string) => void) => {
+      if (value !== undefined && value !== "") set(value);
+    };
+
+    applyIfEmpty(patch.name, name, setName);
+    if (patch.creatorHandle && !creatorHandle) setCreatorHandle(patch.creatorHandle);
+    applyIfEmpty(patch.displayName ?? "", displayName ?? "", (v) => setDisplayName(v));
+    if (patch.platform) {
+      setPlatform(patch.platform);
       setPlatformFromScreenshots(true);
     }
     setDetectedPlatform(
@@ -230,60 +280,30 @@ export default function AnalyzePage() {
     setPlatformConfidence(meta.platformConfidence ?? data.platform_confidence);
     setPlatformOverride(meta.platformOverride ?? undefined);
     setScreenshotTypesDetected(meta.screenshotTypesDetected);
-    setScreenshotTypesUploaded(meta.labels.map((id) => labelDisplayName(id)));
-    if (data.niche && (NICHES as string[]).includes(data.niche)) {
-      setNiche(data.niche as Niche);
-    }
-    if (typeof data.followers === "number" && data.followers > 0) {
-      setFollowers(String(data.followers));
-    }
-    const views =
-      typeof data.views_count === "number" && data.views_count > 0
-        ? data.views_count
-        : typeof data.average_views === "number" && data.average_views > 0
-          ? data.average_views
-          : null;
-    if (views !== null) setAvgViews(String(views));
-    const likes =
-      typeof data.likes_count === "number"
-        ? data.likes_count
-        : typeof data.likes === "number"
-          ? data.likes
-          : null;
-    if (likes !== null && likes >= 0) setAverageLikes(String(likes));
-    if (typeof data.comments_count === "number" && data.comments_count >= 0) {
-      setAverageComments(String(data.comments_count));
-    }
-    if (typeof data.reposts_count === "number" && data.reposts_count >= 0) {
-      setAverageReposts(String(data.reposts_count));
-    }
-    if (typeof data.shares === "number" && data.shares >= 0) {
-      setAverageShares(String(data.shares));
-    }
-    if (typeof data.saves_count === "number" && data.saves_count >= 0) {
-      setAverageSaves(String(data.saves_count));
-    }
-    if (typeof data.growth_30d === "number" && Number.isFinite(data.growth_30d)) {
-      const fNow =
-        typeof data.followers === "number" && data.followers > 0 ? data.followers : 0;
-      if (fNow > 0) {
-        const raw = data.growth_30d;
-        const gDec = Math.abs(raw) <= 1 ? raw : raw / 100;
-        if (Number.isFinite(gDec) && gDec > -0.99) {
-          setFollowers30DaysAgo(String(Math.round(fNow / (1 + gDec))));
-        }
-      }
-    }
-    const merged = [
-      ...data.purchase_intent_comments,
-      ...data.curiosity_comments,
-      ...data.generic_comments,
-    ].filter((c) => typeof c === "string" && c.trim().length > 0);
-    const commentLines = merged.length > 0 ? merged : data.sample_comments;
-    if (commentLines.length > 0) {
-      setComments(commentLines.join("\n"));
-    }
-    // Smooth scroll to the form so the user can review.
+    setScreenshotTypesUploaded(
+      (meta.finalTypes ?? meta.labels).map((id) => labelDisplayName(id))
+    );
+    if (patch.niche) setNiche(patch.niche);
+
+    applyIfEmpty(patch.followers, followers, setFollowers);
+    setProfileDetailsNote(
+      patch.profileDetailsIncomplete
+        ? "Profile details not fully visible — add manually for higher confidence."
+        : null
+    );
+    applyExtracted(patch.avgViews, setAvgViews);
+    applyExtracted(patch.averageLikes, setAverageLikes);
+    applyExtracted(patch.averageComments, setAverageComments);
+    applyExtracted(patch.averageReposts, setAverageReposts);
+    applyExtracted(patch.averageShares, setAverageShares);
+    applyExtracted(patch.averageSaves, setAverageSaves);
+    applyIfEmpty(patch.followers30DaysAgo, followers30DaysAgo, setFollowers30DaysAgo);
+
+    setRecentPostMetrics(patch.recentPostMetrics);
+    setRecentPostCount(patch.recentPostCount);
+
+    if (patch.comments) setComments(patch.comments);
+
     setManualOpen(true);
     requestAnimationFrame(() => {
       document
@@ -297,7 +317,7 @@ export default function AnalyzePage() {
     setFieldErrors({});
     setError(null);
     if (!canRunFreeEvaluation()) {
-      return setError("You've reached today's free evaluations. Join early access to continue.");
+      return setError("You've used your free evaluations. Join early access to continue.");
     }
     if (!name.trim()) return setError("Creator name is required.");
 
@@ -389,6 +409,8 @@ export default function AnalyzePage() {
 
     const body: AnalyzeInput = {
       name: name.trim(),
+      creatorHandle,
+      displayName,
       platform,
       niche,
       followers: fr.value,
@@ -403,6 +425,8 @@ export default function AnalyzePage() {
         screenshotTypesUploaded.length > 0 ? screenshotTypesUploaded : undefined,
       screenshotTypesDetected:
         screenshotTypesDetected.length > 0 ? screenshotTypesDetected : undefined,
+      recentPostMetrics: recentPostMetrics.length > 0 ? recentPostMetrics : undefined,
+      recentPostCount: recentPostCount > 0 ? recentPostCount : undefined,
       detectedPlatform,
       platformConfidence,
       platformOverride,
@@ -490,7 +514,7 @@ export default function AnalyzePage() {
         {stage === "form" && (
             <FormView
             {...{
-              name, setName, platform, setPlatform, niche, setNiche,
+              name, setName, creatorHandle, setCreatorHandle, platform, setPlatform, niche, setNiche,
               followers, setFollowers, avgViews, setAvgViews,
               averageLikes, setAverageLikes,
               averageComments, setAverageComments,
@@ -513,6 +537,7 @@ export default function AnalyzePage() {
                 setPlatformFromScreenshots(true);
               },
               platformFromScreenshots,
+              profileDetailsNote,
               atLimit,
               usageRefresh,
               manualOpen,
@@ -530,6 +555,10 @@ export default function AnalyzePage() {
         )}
         {process.env.NODE_ENV === "development" && <WebhookSyncDevTest />}
       </div>
+      <EarlyAccessModal
+        refreshKey={usageRefresh}
+        onSubmitted={() => setUsageRefresh((k) => k + 1)}
+      />
     </main>
   );
 }
@@ -537,6 +566,8 @@ export default function AnalyzePage() {
 interface FormProps {
   name: string;
   setName: (v: string) => void;
+  creatorHandle?: string;
+  setCreatorHandle: (v: string | undefined) => void;
   platform: Platform;
   setPlatform: (v: Platform) => void;
   niche: Niche;
@@ -575,6 +606,7 @@ interface FormProps {
   ) => void;
   onPlatformCorrected: (platform: Platform) => void;
   platformFromScreenshots: boolean;
+  profileDetailsNote: string | null;
   atLimit: boolean;
   usageRefresh: number;
   manualOpen: boolean;
@@ -582,6 +614,8 @@ interface FormProps {
 }
 
 function FormView(p: FormProps) {
+  const formReady = useMounted();
+
   return (
     <div>
       <div className="mb-10">
@@ -591,20 +625,50 @@ function FormView(p: FormProps) {
         <p className="mt-2 text-sm text-neutral-500">
           Upload → extract → decision
         </p>
+        <TrialUsageHint refreshKey={p.usageRefresh} />
       </div>
 
-      <ScreenshotUpload
-        onExtracted={p.onExtracted}
-        onPlatformCorrected={p.onPlatformCorrected}
-      />
+      {isUrlIntakeEnabled() && (
+        <PasteLinkPanel
+          onRecognized={({ platform, handle }) => {
+            const hints = intakeProfileToAnalyzeHints(
+              mockIntakeProfile(
+                platform,
+                handle,
+                `https://intake.local/${platform}/${handle}`
+              )
+            );
+            if (hints.platform) p.setPlatform(hints.platform);
+            if (hints.name) p.setName(hints.name);
+            if (hints.creatorHandle) p.setCreatorHandle(hints.creatorHandle);
+          }}
+        />
+      )}
+
+      <div id="screenshot-upload" className="scroll-mt-6">
+        <ScreenshotUpload
+          onExtracted={p.onExtracted}
+          onPlatformCorrected={p.onPlatformCorrected}
+        />
+      </div>
 
       <TrialPaywall refreshKey={p.usageRefresh} />
 
-      <form onSubmit={p.onSubmit} className="mt-12 space-y-8">
+      {!formReady ? (
+        <div className="mt-12 rounded-xl border border-neutral-100 bg-neutral-50/80 px-4 py-8 text-center text-sm text-neutral-500">
+          Preparing form…
+        </div>
+      ) : (
+      <form
+        onSubmit={p.onSubmit}
+        className="mt-12 space-y-8"
+        suppressHydrationWarning
+      >
         <details
           id="review-anchor"
           className="group scroll-mt-24"
           open={p.manualOpen}
+          suppressHydrationWarning
           onToggle={(e) => p.onManualOpenChange((e.target as HTMLDetailsElement).open)}
         >
           <summary className="cursor-pointer list-none text-sm font-medium text-neutral-600 hover:text-neutral-900">
@@ -621,6 +685,9 @@ function FormView(p: FormProps) {
           <div className="space-y-5">
         <div className="card-quiet !p-5">
           <p className="text-xs font-medium text-neutral-500">Profile</p>
+          {p.profileDetailsNote && (
+            <p className="mt-2 text-[11px] text-amber-800/90">{p.profileDetailsNote}</p>
+          )}
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="label">Creator name *</label>
@@ -742,7 +809,7 @@ function FormView(p: FormProps) {
             <div className="sm:col-span-2">
               <div className="flex flex-wrap gap-3">
                 <div className="min-w-[7rem] flex-1">
-                  <label className="label text-xs">Avg likes per post (past 30 days)</label>
+                  <label className="label text-xs">Avg likes per post</label>
                   <input
                     className="input text-sm"
                     type="text"
@@ -759,7 +826,7 @@ function FormView(p: FormProps) {
                   )}
                 </div>
                 <div className="min-w-[7rem] flex-1">
-                  <label className="label text-xs">Avg comments per post (past 30 days)</label>
+                  <label className="label text-xs">Avg comments per post</label>
                   <input
                     className="input text-sm"
                     type="text"
@@ -777,13 +844,13 @@ function FormView(p: FormProps) {
                 </div>
               </div>
               <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
-                Use recent visible averages if available.
+                Based on uploaded visible post metrics.
               </p>
             </div>
             <div className="sm:col-span-2">
               <div className="flex flex-wrap gap-3">
                 <div className="min-w-[7rem] flex-1">
-                  <label className="label text-xs">Avg reposts per post (past 30 days)</label>
+                  <label className="label text-xs">Avg reposts per post</label>
                   <input
                     className="input text-sm"
                     type="text"
@@ -800,7 +867,7 @@ function FormView(p: FormProps) {
                   )}
                 </div>
                 <div className="min-w-[7rem] flex-1">
-                  <label className="label text-xs">Avg shares per post (past 30 days)</label>
+                  <label className="label text-xs">Avg shares per post</label>
                   <input
                     className="input text-sm"
                     type="text"
@@ -817,7 +884,7 @@ function FormView(p: FormProps) {
                   )}
                 </div>
                 <div className="min-w-[7rem] flex-1">
-                  <label className="label text-xs">Avg saves per post (past 30 days)</label>
+                  <label className="label text-xs">Avg saves per post</label>
                   <input
                     className="input text-sm"
                     type="text"
@@ -906,6 +973,7 @@ function FormView(p: FormProps) {
           </button>
         </div>
       </form>
+      )}
     </div>
   );
 }

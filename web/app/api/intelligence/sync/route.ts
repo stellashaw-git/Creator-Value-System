@@ -82,6 +82,8 @@ function buildWebhookBody(payload: SyncBody): Record<string, unknown> {
     base.record = payload.record;
     base.timestamp = payload.record.updated_at;
     base.creator_name = ev.creator_name;
+    base.creator_handle = ev.creator_handle ?? ev.creator_name ?? null;
+    base.display_name = ev.display_name ?? null;
     base.recommendation = ev.recommendation;
     base.commercial_score = ev.commercial_score;
     base.platform = ev.platform;
@@ -110,6 +112,14 @@ function buildWebhookBody(payload: SyncBody): Record<string, unknown> {
     base.platform_confidence = ev.platform_confidence ?? null;
     base.platform_override = ev.platform_override ?? null;
     base.screenshot_types_detected = ev.screenshot_types_detected ?? [];
+    base.recent_post_metrics = ev.recent_post_metrics ?? [];
+    base.recent_post_count = ev.recent_post_count ?? 0;
+    base.avg_likes = ev.avg_likes ?? null;
+    base.avg_comments = ev.avg_comments ?? null;
+    base.avg_reposts = ev.avg_reposts ?? null;
+    base.avg_shares = ev.avg_shares ?? null;
+    base.avg_saves = ev.avg_saves ?? null;
+    base.avg_views = ev.avg_views ?? null;
   } else {
     base.event = payload.event;
   }

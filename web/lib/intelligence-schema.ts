@@ -15,6 +15,7 @@ import {
   performanceToOutcomeStatus,
 } from "./dataset";
 import type { CampaignContext, OutcomeStatus, UserWorkflow } from "./intelligence-types";
+import type { RecentPostMetricRow } from "./recent-post-aggregate";
 import type { Report } from "./types";
 
 export type {
@@ -30,6 +31,8 @@ export { BRAND_CATEGORY_TAGS, CAMPAIGN_GOALS, DEFAULT_USER_WORKFLOW } from "./in
 export interface CreatorEvaluationSnapshot {
   evaluation_id: string;
   creator_name: string;
+  creator_handle?: string | null;
+  display_name?: string | null;
   platform: string;
   niche: string;
   followers: number;
@@ -58,6 +61,14 @@ export interface CreatorEvaluationSnapshot {
   detected_platform?: string | null;
   platform_confidence?: string | null;
   platform_override?: string | null;
+  recent_post_metrics?: RecentPostMetricRow[];
+  recent_post_count?: number;
+  avg_likes?: number | null;
+  avg_comments?: number | null;
+  avg_reposts?: number | null;
+  avg_shares?: number | null;
+  avg_saves?: number | null;
+  avg_views?: number | null;
 }
 
 /** Full intelligence record for export / future persistence. */
@@ -96,7 +107,9 @@ export function snapshotFromReport(
 
   return {
     evaluation_id: row.id,
-    creator_name: input.name,
+    creator_name: input.creatorHandle ?? input.name,
+    creator_handle: input.creatorHandle ?? input.name,
+    display_name: input.displayName ?? null,
     platform: input.platform,
     niche: input.niche,
     followers: input.followers,
@@ -127,6 +140,14 @@ export function snapshotFromReport(
     detected_platform: input.detectedPlatform ?? input.platform,
     platform_confidence: input.platformConfidence ?? null,
     platform_override: input.platformOverride ?? null,
+    recent_post_metrics: input.recentPostMetrics ?? [],
+    recent_post_count: input.recentPostCount ?? 0,
+    avg_likes: input.averageLikes ?? null,
+    avg_comments: input.averageComments ?? null,
+    avg_reposts: input.averageReposts ?? null,
+    avg_shares: input.averageShares ?? null,
+    avg_saves: input.averageSaves ?? null,
+    avg_views: input.avgViews > 0 ? input.avgViews : null,
   };
 }
 

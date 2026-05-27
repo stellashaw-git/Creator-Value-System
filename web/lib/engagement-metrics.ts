@@ -17,8 +17,12 @@ export interface PostMetricInputs {
 export interface EngagementMetricsResult {
   basicEngagementRate: number | null;
   expandedEngagementRate: number | null;
+  /** (avg_likes + avg_comments) / avg_views when views are available */
+  viewBasedEngagementRate: number | null;
   shareRate: number | null;
   engagementComponentsUsed: string[];
+  /** Basic rate used likes only because comments were missing */
+  likesOnlyFallback?: boolean;
 }
 
 function parsePct(raw: number | null | undefined): number | undefined {
@@ -37,6 +41,7 @@ export function computeEngagementMetrics(
     return {
       basicEngagementRate: null,
       expandedEngagementRate: null,
+      viewBasedEngagementRate: null,
       shareRate: null,
       engagementComponentsUsed: [],
     };
@@ -59,10 +64,17 @@ export function computeEngagementMetrics(
   if (has(saves)) components.push("saves");
 
   let basic: number | null = null;
+  let likesOnlyFallback = false;
   if (has(likes) && has(comments)) {
     basic = Math.min(1, ((likes ?? 0) + (comments ?? 0)) / followers);
   } else if (has(likes)) {
     basic = Math.min(1, (likes ?? 0) / followers);
+    likesOnlyFallback = true;
+  }
+
+  let viewBased: number | null = null;
+  if (has(likes) && has(comments) && has(views) && views! > 0) {
+    viewBased = Math.min(1, ((likes ?? 0) + (comments ?? 0)) / views!);
   }
 
   let expanded: number | null = null;
@@ -91,8 +103,10 @@ export function computeEngagementMetrics(
   return {
     basicEngagementRate: basic,
     expandedEngagementRate: expanded ?? basic,
+    viewBasedEngagementRate: viewBased,
     shareRate,
     engagementComponentsUsed: components,
+    likesOnlyFallback: likesOnlyFallback || undefined,
   };
 }
 
@@ -112,7 +126,15 @@ export function dataCompletenessScore(components: string[]): number {
 }
 
 export function engagementDisplayFromMetrics(m: EngagementMetricsResult): string {
-  const er = m.expandedEngagementRate ?? m.basicEngagementRate;
+  const er = m.basicEngagementRate ?? m.expandedEngagementRate;
   if (er === null) return "Not enough data";
-  return `${(er * 100).toFixed(2)}%`;
+  let s = `${(er * 100).toFixed(2)}%`;
+  if (m.viewBasedEngagementRate !== null) {
+    s += ` · ${(m.viewBasedEngagementRate * 100).toFixed(2)}% view-based`;
+  }
+  s += " — Follower-based engagement rate. Views not required.";
+  if (m.likesOnlyFallback) {
+    s += " (comments unavailable; likes-only estimate)";
+  }
+  return s;
 }

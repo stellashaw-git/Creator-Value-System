@@ -31,6 +31,14 @@ function parseInput(raw: unknown): AnalyzeInput {
   };
 
   const name = String(b.name ?? "").trim() || "Unnamed Creator";
+  const creatorHandle =
+    typeof b.creatorHandle === "string" && b.creatorHandle.trim()
+      ? b.creatorHandle.trim()
+      : undefined;
+  const displayName =
+    typeof b.displayName === "string" && b.displayName.trim()
+      ? b.displayName.trim()
+      : undefined;
   const platform = String(b.platform ?? "Instagram") as Platform;
   if (!PLATFORMS.includes(platform)) throw new Error("Invalid platform.");
   const niche = String(b.niche ?? "Other") as Niche;
@@ -133,8 +141,33 @@ function parseInput(raw: unknown): AnalyzeInput {
       ? platformConfidenceRaw
       : undefined;
 
+  let recentPostCount: number | undefined;
+  if (typeof b.recentPostCount === "number" && b.recentPostCount > 0) {
+    recentPostCount = Math.floor(b.recentPostCount);
+  }
+
+  let recentPostMetrics: AnalyzeInput["recentPostMetrics"];
+  if (Array.isArray(b.recentPostMetrics) && b.recentPostMetrics.length > 0) {
+    recentPostMetrics = b.recentPostMetrics
+      .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+      .map((row, i) => ({
+        screenshot_id:
+          typeof row.screenshot_id === "string" && row.screenshot_id.trim()
+            ? row.screenshot_id.trim()
+            : `screenshot_${i + 1}`,
+        likes_count: optionalNonnegParsed(row.likes_count, "likes_count") ?? null,
+        comments_count: optionalNonnegParsed(row.comments_count, "comments_count") ?? null,
+        reposts_count: optionalNonnegParsed(row.reposts_count, "reposts_count") ?? null,
+        shares_count: optionalNonnegParsed(row.shares_count, "shares_count") ?? null,
+        saves_count: optionalNonnegParsed(row.saves_count, "saves_count") ?? null,
+        views_count: optionalNonnegParsed(row.views_count, "views_count") ?? null,
+      }));
+  }
+
   return {
     name,
+    creatorHandle,
+    displayName,
     platform,
     niche,
     followers,
@@ -150,6 +183,8 @@ function parseInput(raw: unknown): AnalyzeInput {
     engagementComponentsUsed: metrics.engagementComponentsUsed,
     screenshotTypesUploaded,
     screenshotTypesDetected,
+    recentPostMetrics,
+    recentPostCount,
     detectedPlatform,
     platformConfidence,
     platformOverride,

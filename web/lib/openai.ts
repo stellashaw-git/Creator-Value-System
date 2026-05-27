@@ -5,11 +5,12 @@ import { isEngagementKnown, isGrowthKnown } from "./scoring";
 const SYSTEM =
   "You are the evaluation engine of WorthyIQ — a Creator Intelligence Platform used by brands running " +
   "influencer marketing campaigns and by MCN agencies matching creators with brands. Your output supports " +
-  "campaign-budget decisions. You write like a marketing-investment analyst briefing a deal team — sharp, " +
-  "decisive, business-grade English. You never reference yourself as 'AI' or 'the model'. You avoid " +
-  "influencer-marketing fluff (no 'authentic', no 'leverage', no 'good engagement'). You speak in terms " +
-  "of campaign ROI, audience intent, monetization gap, conversion potential, brand fit, partnership " +
-  "readiness, and commercial upside. Your output reads like a memo, not a chat response.";
+  "campaign-budget decisions. You write like a marketing-investment analyst briefing a deal team — clear, " +
+  "business-grade English, but appropriately uncertain when evidence is limited. You never reference yourself " +
+  "as 'AI' or 'the model'. You avoid influencer-marketing fluff (no 'authentic', no 'leverage', no 'good engagement'). " +
+  "You reason from uploaded screenshots and samples only — use phrasing like 'uploaded comments suggest', " +
+  "'visible signals indicate', 'based on the uploaded sample', and 'evidence is limited'. Never state absolute " +
+  "truths about audience purchase behavior. Separate observed signals from certainty.";
 
 interface AgentJSON {
   memo: {
@@ -65,7 +66,7 @@ PILLAR SCORES (0–100)
 
 DERIVED SIGNALS
 - Monetization verdict: ${r.monetization.label}
-- Comment intent: ${r.commentIntent.purchasePct}% purchase, ${r.commentIntent.curiosityPct}% curiosity, ${r.commentIntent.passivePct}% passive (sample size ${r.commentIntent.total})
+- Comment sample (${r.commentIntent.total} lines): ${r.commentIntent.commercialSummary} (purchase ${r.commentIntent.purchasePct}%, product curiosity ${r.commentIntent.productCuriosityPct}%, style replication ${r.commentIntent.styleReplicationPct}%, passive admiration ${r.commentIntent.passivePct}%)
 - Traffic vs monetization gap: ${r.gap.label}
 - Brand fit score: ${r.brandFit.score}/100
 - Final decision: ${r.decision}
@@ -74,13 +75,13 @@ DERIVED SIGNALS
 Return JSON with this exact shape:
 {
   "memo": {
-    "executiveSummary": "2 sentences. State the verdict and the one driver behind it.",
-    "whyMatters": "2 sentences. Why this niche × audience type matters commercially.",
-    "commercialUpside": "2-3 sentences. Where the brand-side value concentrates.",
-    "audienceSignal": "2 sentences. What the comment / engagement pattern means for conversion.",
-    "monetizationGap": "2 sentences. The single biggest blocker between current state and premium rates.",
-    "riskFactors": "2 sentences. The honest risks a brand or MCN should see before committing campaign budget.",
-    "recommendedStrategy": "2-3 sentences. How exactly to engage — deal structure, KPIs, timeframe."
+    "executiveSummary": "1-2 short sentences. Verdict + key uploaded signal. Acknowledge limited evidence.",
+    "whyMatters": "1-2 sentences. Why niche/category context may matter — probabilistic tone.",
+    "commercialUpside": "1-2 sentences. Possible upside from uploads, not guaranteed outcomes.",
+    "audienceSignal": "1-2 sentences. What uploaded comments/engagement may suggest for conversion.",
+    "monetizationGap": "1-2 sentences. Biggest gap between visible signals and premium rates.",
+    "riskFactors": "1-2 sentences. Honest caveats given partial screenshot evidence.",
+    "recommendedStrategy": "1-2 sentences. Practical next step — pilot, watch, or pass."
   },
   "decisionRationale": "1 sentence. Plain business reason for the final decision (${r.decision}).",
   "outreach": {
@@ -96,10 +97,12 @@ Return JSON with this exact shape:
 }
 
 VOICE RULES
-- Investor-memo tone. Confident. No hedging.
-- Avoid: "leverage", "synergy", "optimize content", "improve engagement", "be authentic", "build community", "good engagement".
-- Use: "audience intent", "monetization gap", "conversion potential", "brand fit", "partnership readiness", "deal value", "commercial signal".
-- Outreach messages must feel hand-typed, not templated. Drop one specific number from the pillar scores into the brand message.`;
+- Investment-analyst tone with calibrated uncertainty.
+- Prefer: "uploaded comments suggest", "visible signals indicate", "based on the sample", "evidence is limited", "may not represent broader behavior".
+- Avoid absolute claims: never say "has no purchase intent", "will not convert", "audience shows no intent to buy".
+- Keep each memo field concise — no essay paragraphs.
+- Avoid: "leverage", "synergy", "optimize content", "improve engagement", "be authentic", "build community".
+- Outreach messages should feel hand-typed; include one specific number where natural.`;
 }
 
 export async function enhanceWithAI(report: Report): Promise<Report> {

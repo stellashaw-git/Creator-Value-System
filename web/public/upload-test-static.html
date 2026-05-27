@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Static upload test</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        padding: 16px;
+        line-height: 1.4;
+      }
+      input {
+        display: block;
+        margin: 8px 0 16px;
+        font-size: 16px;
+      }
+      button {
+        font-size: 16px;
+        padding: 8px 12px;
+      }
+      pre {
+        white-space: pre-wrap;
+        background: #f5f5f5;
+        padding: 12px;
+        margin-top: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Static HTML upload test</h1>
+    <p>No React. No Next.js JavaScript bundle.</p>
+    <p id="status">Waiting for file pick…</p>
+    <p>Page loads this session: <strong id="loads">0</strong></p>
+
+    <h2>A — accept=&quot;image/*&quot; multiple</h2>
+    <input id="input-a" type="file" accept="image/*" multiple />
+
+    <h2>B — no accept, single file</h2>
+    <input id="input-b" type="file" />
+
+    <button id="read-btn" type="button">Read all inputs now</button>
+    <pre id="log"></pre>
+
+    <script>
+      (function () {
+        var loadCount = Number(sessionStorage.getItem("staticUploadLoads") || "0") + 1;
+        sessionStorage.setItem("staticUploadLoads", String(loadCount));
+        document.getElementById("loads").textContent = String(loadCount);
+
+        var logEl = document.getElementById("log");
+        var statusEl = document.getElementById("status");
+
+        function append(line) {
+          logEl.textContent += line + "\n";
+          statusEl.textContent = line;
+        }
+
+        function readInput(input) {
+          var files = input.files;
+          var count = files ? files.length : 0;
+          append(
+            input.id +
+              " → files=" +
+              count +
+              " value=" +
+              (input.value || "(empty)")
+          );
+          for (var i = 0; i < count; i++) {
+            var file = files[i];
+            append(
+              "  " +
+                file.name +
+                " | type=" +
+                (file.type || "(empty)") +
+                " | size=" +
+                file.size
+            );
+          }
+          return count;
+        }
+
+        ["input-a", "input-b"].forEach(function (id) {
+          var input = document.getElementById(id);
+          input.addEventListener("change", function () {
+            append("--- change event on " + id + " ---");
+            readInput(input);
+          });
+          input.addEventListener("input", function () {
+            append("--- input event on " + id + " ---");
+            readInput(input);
+          });
+        });
+
+        document.getElementById("read-btn").addEventListener("click", function () {
+          logEl.textContent = "";
+          append("--- manual read ---");
+          var a = readInput(document.getElementById("input-a"));
+          var b = readInput(document.getElementById("input-b"));
+          alert("Manual read: A=" + a + " files, B=" + b + " files");
+        });
+
+        document.addEventListener("visibilitychange", function () {
+          if (document.visibilityState === "visible") {
+            append("--- page visible again ---");
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

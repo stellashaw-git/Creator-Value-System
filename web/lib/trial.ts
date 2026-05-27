@@ -1,63 +1,109 @@
-export const FREE_EVALUATION_LIMIT = 20;
+import {
+  FOUNDING_EVALUATION_LIMIT,
+  isEarlyAccessGranted,
+} from "@/lib/early-access";
 
-const USAGE_KEY_V2 = "worthyiq.trial.usage.v2";
-const USAGE_KEY_V1 = "worthyiq.trial.usage.v1";
+export const FREE_EVALUATION_LIMIT = 5;
 
-interface DailyUsage {
-  date: string; // YYYY-MM-DD (local)
-  used: number;
+const STORAGE_KEY = "worthyiq.trial.v3";
+
+let devBypassLogged = false;
+
+/**
+ * Developer-only bypass — requires NEXT_PUBLIC_DEV_BYPASS_EVALUATION_LIMIT=true.
+ * In production builds, bypass applies only when that env is explicitly set.
+ */
+export function isDevEvaluationLimitBypassed(): boolean {
+  return process.env.NEXT_PUBLIC_DEV_BYPASS_EVALUATION_LIMIT === "true";
+}
+
+function logDevBypassOnce(): void {
+  if (devBypassLogged || !isBrowser()) return;
+  if (
+    process.env.NODE_ENV === "development" &&
+    isDevEvaluationLimitBypassed()
+  ) {
+    console.log("[dev bypass] evaluation limit bypass enabled");
+    devBypassLogged = true;
+  }
+}
+
+interface TrialState {
+  evaluation_count: number;
+  free_limit_reached: boolean;
 }
 
 const isBrowser = (): boolean => typeof window !== "undefined";
 
-function todayLocal(): string {
-  return new Date().toLocaleDateString("en-CA");
-}
-
-function readDailyUsage(): DailyUsage {
-  const today = todayLocal();
-  if (!isBrowser()) return { date: today, used: 0 };
-
+function readState(): TrialState {
+  if (!isBrowser()) {
+    return { evaluation_count: 0, free_limit_reached: false };
+  }
   try {
-    const rawV2 = window.localStorage.getItem(USAGE_KEY_V2);
-    if (rawV2) {
-      const parsed = JSON.parse(rawV2) as DailyUsage;
-      if (parsed.date === today && typeof parsed.used === "number") {
-        return { date: today, used: Math.max(0, parsed.used) };
-      }
-      return { date: today, used: 0 };
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      return { evaluation_count: 0, free_limit_reached: false };
     }
-
-    const rawV1 = window.localStorage.getItem(USAGE_KEY_V1);
-    const usedV1 = rawV1 ? Math.max(0, parseInt(rawV1, 10) || 0) : 0;
-    return { date: today, used: usedV1 };
+    const parsed = JSON.parse(raw) as Partial<TrialState>;
+    const evaluation_count = Math.max(0, Number(parsed.evaluation_count) || 0);
+    return {
+      evaluation_count,
+      free_limit_reached: Boolean(parsed.free_limit_reached),
+    };
   } catch {
-    return { date: today, used: 0 };
+    return { evaluation_count: 0, free_limit_reached: false };
   }
 }
 
-function writeDailyUsage(usage: DailyUsage): void {
+function writeState(state: TrialState): void {
   if (!isBrowser()) return;
   try {
-    window.localStorage.setItem(USAGE_KEY_V2, JSON.stringify(usage));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     // quota / disabled
   }
 }
 
-export function getTrialUsage(): { used: number; limit: number } {
-  const { used } = readDailyUsage();
-  return { used, limit: FREE_EVALUATION_LIMIT };
+export function getEffectiveEvaluationLimit(): number {
+  return isEarlyAccessGranted() ? FOUNDING_EVALUATION_LIMIT : FREE_EVALUATION_LIMIT;
+}
+
+export function getTrialUsage(): {
+  used: number;
+  limit: number;
+  remaining: number;
+  free_limit_reached: boolean;
+  early_access_submitted: boolean;
+} {
+  const { evaluation_count, free_limit_reached } = readState();
+  const limit = getEffectiveEvaluationLimit();
+  const used = Math.min(evaluation_count, limit);
+  const reached =
+    isDevEvaluationLimitBypassed() ? false : free_limit_reached;
+  return {
+    used,
+    limit,
+    remaining: Math.max(0, limit - used),
+    free_limit_reached: reached,
+    early_access_submitted: isEarlyAccessGranted(),
+  };
 }
 
 export function canRunFreeEvaluation(): boolean {
+  logDevBypassOnce();
+  if (isDevEvaluationLimitBypassed()) return true;
   const { used, limit } = getTrialUsage();
   return used < limit;
 }
 
+/** Count only after extraction + recommendation completes successfully. */
 export function incrementTrialUsage(): void {
   if (!isBrowser()) return;
-  const today = todayLocal();
-  const { used } = readDailyUsage();
-  writeDailyUsage({ date: today, used: used + 1 });
+  const state = readState();
+  const limit = getEffectiveEvaluationLimit();
+  const nextCount = state.evaluation_count + 1;
+  writeState({
+    evaluation_count: nextCount,
+    free_limit_reached: nextCount >= FREE_EVALUATION_LIMIT && !isEarlyAccessGranted(),
+  });
 }

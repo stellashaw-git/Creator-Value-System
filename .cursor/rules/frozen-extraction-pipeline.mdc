@@ -1,0 +1,58 @@
+---
+description: Do not modify screenshot detection, extraction, upload state, or form mapping unless explicitly requested
+alwaysApply: true
+---
+
+# Frozen — Extraction Pipeline
+
+**Status: verified accurate (May 2026). User confirmed — freeze the whole pipeline. Do not change unless the user explicitly says `modify extraction pipeline` or names a specific file/function below.**
+
+## Protected files (hands off by default)
+
+| Area | Files |
+|------|--------|
+| Screenshot upload state | `web/components/screenshot-upload.tsx` |
+| Classification | `web/lib/screenshot-type-detect.ts` (`CLASSIFIER_VERSION = v4-score-2`) |
+| Comment OCR filter | `web/lib/comment-line-filter.ts` |
+| Vision API + prompt | `web/app/api/extract-screenshot/route.ts` |
+| Extraction routing | `web/lib/extraction-pipeline.ts` |
+| OCR / vision normalize | `web/lib/vision-response-normalize.ts` |
+| Post averaging | `web/lib/recent-post-aggregate.ts` |
+| Reels grid views | `web/lib/profile-grid-views.ts` |
+| Normalization | `web/lib/extract.ts` |
+| Platform detection | `web/lib/platform-detect.ts` |
+| Form mapping | `web/lib/extraction-form-map.ts` |
+| Engagement display (form) | `web/lib/engagement-metrics.ts` |
+| Extraction cache | `web/lib/extraction-cache.ts` |
+| Screenshot compress/dedupe | `web/lib/compress-screenshot.ts` |
+| Analyze form from extraction | `web/app/analyze/page.tsx` (`onExtracted`, mapping apply logic) |
+
+## Behavior that must stay as-is
+
+- **Screenshot types**: Profile / Recent Post / Comments / Analytics — routing by **finalType** (user label + override), not detected type alone
+- **Classification**: Score-based `v4-score-2`; vertical reels → Recent Post; engagement OCR (`180K heart`, `181 comments`) must not win as Comments
+- **detectedType / finalType**, re-extract, and label override flow
+- **Platform detection** and low-confidence confirm flow
+- **Recent Post metrics**: vertical right column + bottom icon row; post-labeled images never skipped as Reels grid; averages over all **final** Recent Post screenshots
+- **Reels grid** (profile): thumbnail view counts → `avg_views`; not mixed into post likes
+- **Comments extraction**: real comment text only; metric/chrome lines filtered; populated from Comments-labeled screenshots
+- **Extraction-to-form mapping**; do not overwrite user-entered non-empty values
+- **Cache extraction** (fingerprint cache)
+
+## When changes ARE allowed
+
+Only if the user **explicitly** says:
+- `modify extraction pipeline`, or
+- names a **specific file/function** in the pipeline above.
+
+For unrelated work (scoring, decision layer, auth, DB, UI polish elsewhere): **do not refactor or “improve” these files** as collateral damage.
+
+## Allowed without pipeline unlock
+
+Decision layer / scoring only:
+- `web/lib/scoring.ts`
+- `web/lib/signal-insights.ts`
+- `web/lib/campaign-fit.ts`
+- `web/lib/types.ts` (decision/scoring types + wording fields only)
+- `web/lib/openai.ts` (memo prose only — do not change extraction)
+- Report copy via scoring memo fields (not UI layout)

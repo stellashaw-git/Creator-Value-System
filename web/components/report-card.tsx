@@ -60,8 +60,47 @@ function CommercialPotential({ report }: { report: Report }) {
           <Badge label={report.growth.label} tone={toneFor(report.growth.label)} />
         </div>
       </div>
-      <p className="mt-6 text-[17px] leading-relaxed text-neutral-800">
+      <p className="mt-5 text-sm leading-relaxed text-neutral-600">
         {report.memo.executiveSummary}
+      </p>
+    </section>
+  );
+}
+
+function MonetizationSignal({ report }: { report: Report }) {
+  const text =
+    report.signalInsights?.monetizationSignal ??
+    report.memo.audienceSignal;
+  return (
+    <section className="rounded-2xl bg-neutral-50/80 px-5 py-4 ring-1 ring-neutral-100">
+      <p className="section-title">Monetization signal</p>
+      <p className="mt-2 text-sm leading-relaxed text-neutral-800">{text}</p>
+      {report.signalInsights?.purchaseIntentNote && (
+        <p className="mt-3 text-xs text-neutral-500">
+          {report.signalInsights.purchaseIntentNote}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function EvidenceConfidence({ report }: { report: Report }) {
+  const insights = report.signalInsights;
+  if (!insights) return null;
+  const tone =
+    insights.evidenceConfidenceLevel === "High"
+      ? "green"
+      : insights.evidenceConfidenceLevel === "Moderate"
+        ? "amber"
+        : "red";
+  return (
+    <section className="rounded-2xl bg-neutral-50/80 px-5 py-4 ring-1 ring-neutral-100">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="section-title">Evidence confidence</p>
+        <Badge label={insights.evidenceConfidenceLevel} tone={tone} />
+      </div>
+      <p className="mt-2 text-sm leading-relaxed text-neutral-700">
+        {insights.evidenceConfidence}
       </p>
     </section>
   );
@@ -99,6 +138,13 @@ function KeySignals({ report }: { report: Report }) {
           headline: insights.dataCompleteness.split(" — ")[0] ?? "Moderate",
           detail: insights.dataCompleteness,
           score: report.overallScore,
+        },
+        {
+          label: "Purchase intent",
+          headline: report.monetization.label,
+          detail: report.commentIntent.commercialSummary,
+          score: report.pillarScores.intent,
+          footnote: insights.purchaseIntentNote,
         },
       ]
     : [
@@ -142,6 +188,11 @@ function KeySignals({ report }: { report: Report }) {
             <p className="text-[11px] font-medium text-neutral-500">{item.label}</p>
             <p className="mt-1 text-sm font-semibold text-neutral-900">{item.headline}</p>
             <p className="mt-0.5 text-xs text-neutral-500">{item.detail}</p>
+            {"footnote" in item && item.footnote && (
+              <p className="mt-2 text-[11px] leading-snug text-neutral-400">
+                {item.footnote}
+              </p>
+            )}
           </div>
         ))}
       </div>
@@ -190,11 +241,9 @@ function RecommendedAction({ report }: { report: Report }) {
 function FullBrief({ report }: { report: Report }) {
   const m = report.memo;
   const sections: { heading: string; body: string }[] = [
-    { heading: "Why this creator matters", body: m.whyMatters },
-    { heading: "Commercial upside", body: m.commercialUpside },
-    { heading: "Audience & engagement", body: m.audienceSignal },
-    { heading: "Monetization gap", body: m.monetizationGap },
-    { heading: "Risk factors", body: m.riskFactors },
+    { heading: "Context", body: m.whyMatters },
+    { heading: "Possible upside (uploaded evidence)", body: m.commercialUpside },
+    { heading: "Caveats", body: m.riskFactors },
   ];
 
   return (
@@ -213,7 +262,7 @@ function FullBrief({ report }: { report: Report }) {
           </div>
         ))}
         <div className="rounded-xl bg-neutral-50 p-4">
-          <p className="text-xs font-medium text-neutral-500">Strategy</p>
+          <p className="text-xs font-medium text-neutral-500">Suggested approach</p>
           <p className="mt-2 text-sm leading-relaxed text-neutral-800">
             {m.recommendedStrategy}
           </p>
@@ -309,11 +358,13 @@ export function ReportCard({
 
       {report.decisionConfidence !== "High" && (
         <p className="text-center text-xs text-neutral-500">
-          Based on partial creator data — add metrics for higher confidence.
+          Based on partial uploaded evidence — add post, comment, and analytics screenshots for higher confidence.
         </p>
       )}
 
       <CommercialPotential report={report} />
+      <MonetizationSignal report={report} />
+      <EvidenceConfidence report={report} />
       <CampaignFit report={report} />
       <RecommendedAction report={report} />
       {savedId && showFeedback && <ReportCardFeedback savedId={savedId} />}

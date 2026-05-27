@@ -3,7 +3,13 @@
  * Side-effect free. Same function shape used by the API route.
  */
 
+import {
+  analyzeCommentSample,
+  commercialSignalPct,
+  intentScoreFromSample,
+} from "./comment-intent";
 import { computeEngagementMetrics } from "./engagement-metrics";
+import type { CampaignGoal } from "./intelligence-types";
 import { buildSignalInsights, spreadMemoLine } from "./signal-insights";
 import type {
   Action,
@@ -13,75 +19,28 @@ import type {
   DecisionConfidence,
   DecisionMemo,
   GapState,
+  IntentConfidence,
   NextAction,
   OutreachMessages,
   Quality,
+  RecommendedRole,
   Report,
   SectionLine,
   Verdict,
 } from "./types";
 
-// ---------- 0. Comment classification ----------
+type EngagementRateBasis = "views" | "followers" | "proxy";
+type ReachTier = "weak" | "decent" | "strong" | "breakout";
 
-const PURCHASE_PATTERNS = [
-  /\blink\b/i, /where (did|do|to|can i)/i, /how (do|can) i (get|buy)/i,
-  /price\??/i, /how much/i, /\bcode\b/i, /discount/i, /coupon/i,
-  /\bbuy\b/i, /\bsize\??/i, /shipping/i, /\bdrop\b/i, /restock/i,
-  /sold out/i, /need this/i, /want this/i, /add to cart/i,
-];
-const CURIOSITY_PATTERNS = [
-  /\?$/, /\bwhy\b/i, /\bhow\b/i, /\bwhen\b/i, /\bwhat\b/i,
-  /which one/i, /recommend/i, /any tips/i, /tell me more/i,
-];
-const PASSIVE_PATTERNS = [
-  /^[😍🔥❤️💕✨🥰😘👌🙌💖💯⭐️\s]+$/u,
-  /^(love|cute|pretty|gorgeous|stunning|beautiful|amazing|wow|nice|so good)[\s!.]*$/i,
-  /^(omg|yes|yas|queen|slay)[\s!.]*$/i,
-];
-
-function classify(text: string): "purchase" | "curiosity" | "passive" {
-  const t = text.trim();
-  if (!t) return "passive";
-  if (PURCHASE_PATTERNS.some((re) => re.test(t))) return "purchase";
-  if (CURIOSITY_PATTERNS.some((re) => re.test(t))) return "curiosity";
-  if (PASSIVE_PATTERNS.some((re) => re.test(t))) return "passive";
-  return "passive";
+interface ScoringEngagementRate {
+  rate: number;
+  basis: EngagementRateBasis;
 }
 
-function commentIntentAnalysis(comments: string[]): CommentIntent {
-  let purchase = 0, curiosity = 0, passive = 0;
-  for (const c of comments) {
-    const b = classify(c);
-    if (b === "purchase") purchase++;
-    else if (b === "curiosity") curiosity++;
-    else passive++;
-  }
-  const total = purchase + curiosity + passive;
-  if (total === 0) {
-    return {
-      total: 0,
-      purchasePct: 0,
-      curiosityPct: 0,
-      passivePct: 100,
-      interpretation:
-        "No comment sample provided — defaulting to passive baseline. Add 10–30 recent comments for a real read.",
-    };
-  }
-  const p = Math.round((purchase / total) * 100);
-  const c = Math.round((curiosity / total) * 100);
-  const pa = 100 - p - c;
+// ---------- 0. Comment classification (uploaded sample only) ----------
 
-  let interpretation: string;
-  if (p >= 20) {
-    interpretation = "Audience actively asks to buy — a strong commercial signal brands pay premium for.";
-  } else if (p >= 8) {
-    interpretation = "Early purchase intent is forming, but not yet the dominant pattern.";
-  } else if (c >= 30) {
-    interpretation = "Audience is curious but not buying — high engagement, weak conversion language.";
-  } else {
-    interpretation = "Audience is largely passive — engagement is decorative rather than commercial.";
-  }
-  return { total, purchasePct: p, curiosityPct: c, passivePct: pa, interpretation };
+function commentIntentAnalysis(comments: string[]): CommentIntent {
+  return analyzeCommentSample(comments);
 }
 
 export function isEngagementKnown(input: AnalyzeInput): boolean {
@@ -108,7 +67,36 @@ function impliedEngagementRate(avgViews: number, followers: number): number {
   return Math.min(0.08, Math.max(0.025, vtr * 0.055));
 }
 
-function scoringEngagementRate(input: AnalyzeInput): number {
+/** Prefer (likes + comments + shares + saves) / views when views exist. */
+function viewsBasedEngagementRate(input: AnalyzeInput): number | null {
+  const views = input.avgViews;
+  if (!views || views <= 0) return null;
+
+  const has = (v: number | undefined) =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0;
+
+  const sum =
+    (has(input.averageLikes) ? input.averageLikes! : 0) +
+    (has(input.averageComments) ? input.averageComments! : 0) +
+    (has(input.averageReposts) ? input.averageReposts! : 0) +
+    (has(input.averageShares) ? input.averageShares! : 0) +
+    (has(input.averageSaves) ? input.averageSaves! : 0);
+
+  if (sum <= 0) {
+    if (has(input.averageLikes) && input.averageLikes! > 0) {
+      return Math.min(1, input.averageLikes! / views);
+    }
+    return null;
+  }
+  return Math.min(1, sum / views);
+}
+
+function scoringEngagementRate(input: AnalyzeInput): ScoringEngagementRate {
+  const viewsEr = viewsBasedEngagementRate(input);
+  if (viewsEr !== null) {
+    return { rate: viewsEr, basis: "views" };
+  }
+
   const computed = computeEngagementMetrics({
     followers: input.followers,
     averageLikes: input.averageLikes,
@@ -118,12 +106,74 @@ function scoringEngagementRate(input: AnalyzeInput): number {
     averageSaves: input.averageSaves,
     averageViews: input.avgViews > 0 ? input.avgViews : undefined,
   });
-  const er =
+  const followerEr =
     computed.expandedEngagementRate ??
     computed.basicEngagementRate ??
     (isEngagementKnown(input) ? input.engagementRate : undefined);
-  if (typeof er === "number" && Number.isFinite(er)) return Math.min(1, Math.max(0, er));
-  return impliedEngagementRate(input.avgViews, input.followers);
+  if (typeof followerEr === "number" && Number.isFinite(followerEr)) {
+    return { rate: Math.min(1, Math.max(0, followerEr)), basis: "followers" };
+  }
+  return {
+    rate: impliedEngagementRate(input.avgViews, input.followers),
+    basis: "proxy",
+  };
+}
+
+function formatEngagementRateForDisplay(input: AnalyzeInput): string {
+  const { rate, basis } = scoringEngagementRate(input);
+  const pct = (rate * 100).toFixed(1);
+  if (basis === "views") {
+    return `${pct}% engagement vs views (likes + comments + shares + saves)`;
+  }
+  if (basis === "followers") {
+    return `${pct}% engagement vs followers`;
+  }
+  return `~${pct}% reach-based engagement proxy`;
+}
+
+function reachTier(followers: number, avgViews: number): { tier: ReachTier; ratio: number; label: string } {
+  const ratio = followers > 0 && avgViews > 0 ? avgViews / followers : 0;
+  if (ratio >= 0.5) return { tier: "breakout", ratio, label: "Breakout reach" };
+  if (ratio >= 0.25) return { tier: "strong", ratio, label: "Strong reach" };
+  if (ratio >= 0.1) return { tier: "decent", ratio, label: "Decent reach" };
+  return { tier: "weak", ratio, label: "Weak reach" };
+}
+
+function isAwarenessGoal(goal?: CampaignGoal): boolean {
+  return (
+    goal === "Awareness" ||
+    goal === "UGC" ||
+    goal === "Product Launch" ||
+    goal === "Community Growth"
+  );
+}
+
+function isConversionGoal(goal?: CampaignGoal): boolean {
+  return goal === "Conversion";
+}
+
+function pillarWeights(
+  intentConfidence: IntentConfidence,
+  campaignGoal?: CampaignGoal
+): {
+  engagement: number;
+  reach: number;
+  growth: number;
+  intent: number;
+} {
+  if (isAwarenessGoal(campaignGoal)) {
+    const intent =
+      intentConfidence === "high" ? 0.08 : intentConfidence === "medium" ? 0.05 : 0.02;
+    return { reach: 0.38, engagement: 0.35, growth: 0.22, intent };
+  }
+  if (isConversionGoal(campaignGoal)) {
+    const intent =
+      intentConfidence === "high" ? 0.18 : intentConfidence === "medium" ? 0.12 : 0.08;
+    return { reach: 0.28, engagement: 0.3, growth: 0.2, intent };
+  }
+  const intent =
+    intentConfidence === "high" ? 0.15 : intentConfidence === "medium" ? 0.1 : 0.05;
+  return { reach: 0.32, engagement: 0.33, growth: 0.22, intent };
 }
 
 /** Neutral ~8.5% 30d growth when history is missing — avoids heavy penalty. */
@@ -136,19 +186,26 @@ function scoringGrowthRate(input: AnalyzeInput): number {
 
 // ---------- 1–4. Pillar scores (0–100) ----------
 
-function engagementScore(er: number, avgViews: number, followers: number): number {
-  const erScore = Math.min(100, (er / 0.08) * 100);
-  const vtr = followers > 0 ? avgViews / followers : 0;
-  const vtrScore = Math.min(100, (vtr / 0.4) * 100);
-  return Math.round(erScore * 0.75 + vtrScore * 0.25);
+function engagementScore(er: number, basis: EngagementRateBasis): number {
+  const target = basis === "views" ? 0.06 : basis === "followers" ? 0.05 : 0.04;
+  return Math.round(Math.min(100, (er / target) * 100));
 }
 
 function reachScore(followers: number, avgViews: number): number {
+  if (followers > 0 && avgViews > 0) {
+    const { tier } = reachTier(followers, avgViews);
+    const tierBase =
+      tier === "breakout" ? 92 : tier === "strong" ? 78 : tier === "decent" ? 55 : 25;
+    const fBoost = Math.min(18, Math.max(0, (Math.log10(Math.max(1, followers)) - 2) * 6));
+    const vBoost = Math.min(12, Math.max(0, (Math.log10(Math.max(1, avgViews)) - 1.5) * 5));
+    return Math.round(Math.min(100, tierBase + fBoost * 0.4 + vBoost * 0.35));
+  }
+
   const f = Math.max(1, followers);
   const v = Math.max(1, avgViews);
   const fScore = Math.min(100, (Math.log10(f) - 2) * 20);
-  const vScore = Math.min(100, (Math.log10(v) - 1.5) * 22);
-  return Math.round(Math.max(0, fScore * 0.6 + vScore * 0.4));
+  const vScore = avgViews > 0 ? Math.min(100, (Math.log10(v) - 1.5) * 22) : 0;
+  return Math.round(Math.max(0, fScore * 0.65 + vScore * 0.35));
 }
 
 function growthScore(rate: number): number {
@@ -157,25 +214,103 @@ function growthScore(rate: number): number {
 }
 
 function intentScore(intent: CommentIntent): number {
-  if (intent.total === 0) return 25;
-  const p = intent.purchasePct;
-  const c = intent.curiosityPct;
-  return Math.round(Math.min(100, p * 3 + c * 0.6));
+  return intentScoreFromSample(intent);
+}
+
+function creatorArchetypeLabel(
+  reach: number,
+  engagement: number,
+  growth: number,
+  commentIntent: CommentIntent,
+  followers: number,
+  avgViews: number
+): string {
+  const { tier } = reachTier(followers, avgViews);
+  const commercial = commercialSignalPct(commentIntent);
+  if (
+    commentIntent.intentConfidence !== "low" &&
+    (commentIntent.purchasePct >= 15 || commercial >= 35)
+  ) {
+    return "Conversion Creator";
+  }
+  if (tier === "breakout" || (reach >= 75 && engagement >= 55)) {
+    return "Viral Distribution Creator";
+  }
+  if (
+    engagement >= 60 &&
+    (commentIntent.productCuriosityPct >= 25 || commentIntent.curiosityPct >= 25)
+  ) {
+    return "Community Creator";
+  }
+  if (reach >= 65 || growth >= 65) {
+    return "Awareness Creator";
+  }
+  return "Awareness Creator";
+}
+
+function recommendedRole(
+  reach: number,
+  engagement: number,
+  growth: number,
+  commentIntent: CommentIntent,
+  followers: number,
+  avgViews: number
+): RecommendedRole {
+  const label = creatorArchetypeLabel(
+    reach,
+    engagement,
+    growth,
+    commentIntent,
+    followers,
+    avgViews
+  );
+  if (label === "Conversion Creator") return "Conversion";
+  if (label === "Viral Distribution Creator") return "Distribution";
+  if (label === "Community Creator") return "Community";
+  return "Awareness";
 }
 
 // ---------- 5. Snapshot verdict lines ----------
 
-function monetizationVerdict(overall: number, intent: number, reach: number): SectionLine<Verdict> {
-  if (overall >= 70 && intent >= 60) {
-    return { label: "High", detail: "Conversion-grade audience with meaningful reach — paid-deal-ready." };
+function monetizationVerdict(
+  overall: number,
+  intent: number,
+  reach: number,
+  intentConfidence: IntentConfidence
+): SectionLine<Verdict> {
+  if (overall >= 70 && intent >= 60 && intentConfidence !== "low") {
+    return {
+      label: "High",
+      detail:
+        "Uploaded signals suggest conversion-friendly audience behavior with meaningful reach — worth exploring paid collaboration.",
+    };
   }
-  if (reach >= 70 && intent < 40) {
-    return { label: "Low", detail: "Traffic without intent — brands will price reach only, not conversion." };
+  if (reach >= 65 && intentConfidence === "low") {
+    return {
+      label: "Medium",
+      detail:
+        "Reach is strong in uploads, but purchase-intent evidence is under-sampled — treat as awareness / top-of-funnel until comment evidence improves.",
+    };
+  }
+  if (reach >= 65 && intent < 45) {
+    return {
+      label: "Medium",
+      detail:
+        "Visible reach is strong; uploaded comments do not yet prove conversion intent — brands may price this as awareness-first with optional conversion upside.",
+    };
   }
   if (overall >= 50) {
-    return { label: "Medium", detail: "Solid engagement, mixed buying intent — pilot before scaling spend." };
+    return {
+      label: "Medium",
+      detail:
+        "Mixed commercial signals in uploads — engagement looks workable, but purchase intent is not clearly proven yet.",
+    };
   }
-  return { label: "Low", detail: "Neither reach nor intent is strong enough to justify paid placements yet." };
+  return {
+    label: "Low",
+    detail:
+      "Based on uploaded evidence, conversion signals are thin — consider only if campaign goals are reach-first or you can run a low-risk pilot.",
+  };
 }
 
 function growthSignal(growth: number, rate: number | undefined): SectionLine<Quality> {
@@ -191,36 +326,99 @@ function growthSignal(growth: number, rate: number | undefined): SectionLine<Qua
   return { label: "Weak", detail: `+${Math.round(rate * 100)}% in 30 days — momentum has stalled.` };
 }
 
-function engagementQuality(engagement: number, knownEr: number | undefined, proxyEr: number): SectionLine<Quality> {
-  const erPct = ((knownEr !== undefined ? knownEr : proxyEr) * 100).toFixed(1);
-  if (knownEr === undefined) {
+function engagementQuality(
+  engagement: number,
+  er: ScoringEngagementRate,
+  reachLabel: string
+): SectionLine<Quality> {
+  const erPct = (er.rate * 100).toFixed(1);
+  if (er.basis === "views") {
     if (engagement >= 70) {
       return {
         label: "Strong",
-        detail: `Likes and comments per follower were not provided together — a reach-based proxy (~${erPct}% equivalent ER) keeps scoring grounded.`,
+        detail: `${erPct}% engagement vs views — audience is actively responding relative to exposure. ${reachLabel}.`,
       };
     }
     if (engagement >= 40) {
       return {
         label: "Average",
-        detail: `Likes and comments per follower were not provided together — a reach-based proxy (~${erPct}% equivalent ER) keeps scoring grounded.`,
+        detail: `${erPct}% engagement vs views — workable band for this tier. ${reachLabel}.`,
       };
     }
     return {
       label: "Weak",
-      detail: `Likes and comments per follower were not provided together — a reach-based proxy (~${erPct}% equivalent ER) keeps scoring grounded.`,
+      detail: `${erPct}% engagement vs views — interactions look light relative to views. ${reachLabel}.`,
     };
   }
-  if (engagement >= 70) return { label: "Strong", detail: `${erPct}% ER — audience is actively responding, not just watching.` };
-  if (engagement >= 40) return { label: "Average", detail: `${erPct}% ER — engagement is in the normal band for this tier.` };
-  return { label: "Weak", detail: `${erPct}% ER — interactions are well below what brands expect at this scale.` };
+  if (er.basis === "followers") {
+    if (engagement >= 70) {
+      return {
+        label: "Strong",
+        detail: `${erPct}% engagement vs followers — audience is actively responding. Views were not available; follower-based ER used.`,
+      };
+    }
+    if (engagement >= 40) {
+      return {
+        label: "Average",
+        detail: `${erPct}% engagement vs followers — normal band for this tier. Views were not available; follower-based ER used.`,
+      };
+    }
+    return {
+      label: "Weak",
+      detail: `${erPct}% engagement vs followers — interactions are below typical tier expectations. Views were not available; follower-based ER used.`,
+    };
+  }
+  return {
+    label: engagement >= 55 ? "Average" : "Weak",
+    detail: `Limited engagement inputs — reach-based proxy (~${erPct}% equivalent ER). ${reachLabel}.`,
+  };
 }
 
-function trafficVsMonetizationGap(reach: number, intent: number): SectionLine<GapState> {
-  if (reach >= 60 && intent >= 60) return { label: "Strong monetization", detail: "Reach and buying intent both present — engagement supports conversion." };
-  if (reach >= 60 && intent < 40) return { label: "High traffic, weak monetization", detail: "Audience size is real, but commercial language is missing — common aesthetic-account trap." };
-  if (reach < 40 && intent >= 60) return { label: "Low traffic, strong potential", detail: "Small but commercially-minded audience — punches above their follower count." };
-  return { label: "Balanced", detail: "Reach and intent are roughly aligned at the same tier — no major mismatch." };
+function trafficVsMonetizationGap(
+  reach: number,
+  intent: number,
+  intentConfidence: IntentConfidence
+): SectionLine<GapState> {
+  if (reach >= 60 && intent >= 60 && intentConfidence !== "low") {
+    return {
+      label: "Strong monetization",
+      detail:
+        "Uploaded signals suggest both reach and purchase-oriented comment patterns — engagement may support conversion.",
+    };
+  }
+  if (reach >= 60 && intentConfidence === "low") {
+    return {
+      label: "High traffic, under-sampled intent",
+      detail:
+        "Audience reach looks real in uploads, but the comment sample is too small to judge conversion — missing evidence, not negative evidence.",
+    };
+  }
+  if (reach >= 60 && intent < 45 && intentConfidence !== "low") {
+    return {
+      label: "High traffic, weak monetization",
+      detail:
+        "Audience size appears real in uploads, but comment sample shows limited buying language — common when admiration outpaces commerce intent.",
+    };
+  }
+  if (reach >= 60 && intent < 45) {
+    return {
+      label: "High traffic, under-sampled intent",
+      detail:
+        "Reach is strong but purchase-intent evidence is limited — treat as under-sampled, not weak monetization.",
+    };
+  }
+  if (reach < 40 && intent >= 60 && intentConfidence !== "low") {
+    return {
+      label: "Low traffic, strong potential",
+      detail:
+        "Smaller audience in uploads, but comment sample shows relatively stronger commercial language — may punch above follower count.",
+    };
+  }
+  return {
+    label: "Balanced",
+    detail:
+      "Reach and intent signals in uploads sit at a similar tier — no major mismatch, but no standout commercial edge either.",
+  };
 }
 
 // ---------- 6. Brand fit ----------
@@ -237,10 +435,51 @@ const NICHE_BRAND_AFFINITY: Record<string, string[]> = {
   Other: [],
 };
 
-function brandFit(niche: string, intent: number, reach: number, brandCategory?: string): Report["brandFit"] {
-  const base = intent * 0.6 + reach * 0.4;
+function brandFitScoreBase(
+  intent: number,
+  reach: number,
+  engagement: number,
+  intentConfidence: IntentConfidence,
+  campaignGoal?: CampaignGoal
+): number {
+  if (isAwarenessGoal(campaignGoal)) {
+    return reach * 0.55 + engagement * 0.35 + intent * 0.1;
+  }
+  if (intentConfidence === "low") {
+    return reach * 0.5 + engagement * 0.3 + intent * 0.2;
+  }
+  if (isConversionGoal(campaignGoal)) {
+    return intent * 0.55 + reach * 0.3 + engagement * 0.15;
+  }
+  return intent * 0.6 + reach * 0.4;
+}
+
+function brandFit(
+  niche: string,
+  intent: number,
+  reach: number,
+  engagement: number,
+  brandCategory?: string,
+  intentConfidence?: IntentConfidence,
+  campaignGoal?: CampaignGoal
+): Report["brandFit"] {
+  const base = brandFitScoreBase(
+    intent,
+    reach,
+    engagement,
+    intentConfidence ?? "low",
+    campaignGoal
+  );
   if (!brandCategory || !brandCategory.trim()) {
-    return { score: Math.round(base), detail: "Generic fit based on niche + commercial signal. Add a brand category for a tighter read." };
+    const goalHint = isAwarenessGoal(campaignGoal)
+      ? " Awareness goal weights reach + engagement over comment intent."
+      : isConversionGoal(campaignGoal)
+        ? " Conversion goal weights purchase-intent signals more heavily."
+        : "";
+    return {
+      score: Math.round(base),
+      detail: `Generic fit based on niche + commercial signal.${goalHint} Add a brand category for a tighter read.`,
+    };
   }
   const cat = brandCategory.trim().toLowerCase();
   const affinity = NICHE_BRAND_AFFINITY[niche] || [];
@@ -266,23 +505,106 @@ function recommendedAction(decision: Decision, growth: number): SectionLine<Acti
 
 // ---------- 8. Final decision ----------
 
-function finalDecision(overall: number, engagement: number, growth: number, intent: number): { decision: Decision; rationale: string } {
+function finalDecision(
+  overall: number,
+  engagement: number,
+  growth: number,
+  intent: number,
+  reach: number,
+  intentConfidence: IntentConfidence,
+  campaignGoal?: CampaignGoal
+): { decision: Decision; rationale: string } {
+  const strongReach = reach >= 65;
+  const decentEngagement = engagement >= 38;
+  const lowIntentEvidence = intentConfidence === "low";
   const strong = [engagement, growth, intent].filter((s) => s >= 65).length;
-  if (overall >= 70 && strong >= 2) {
-    return {
-      decision: "Strong Candidate",
-      rationale: "Multiple commercial pillars are strong simultaneously — this is the profile that delivers measurable campaign ROI.",
-    };
-  }
-  if (overall >= 45) {
+  const awareness = isAwarenessGoal(campaignGoal);
+  const conversion = isConversionGoal(campaignGoal);
+
+  if (strongReach && decentEngagement && lowIntentEvidence) {
+    if (awareness && overall >= 58) {
+      return {
+        decision: "Strong Candidate",
+        rationale:
+          "Strong reach and engagement for an awareness campaign — comment sample is too small for conversion reads, but distribution metrics support a top-of-funnel partnership.",
+      };
+    }
     return {
       decision: "Watchlist",
-      rationale: "Mixed signal — one or two pillars are working, others lag. Worth tracking, not committing campaign budget yet.",
+      rationale: awareness
+        ? "Strong reach and engagement for your stated awareness goal — comment sample is too small for conversion reads. Lean top-of-funnel candidate."
+        : "Strong reach and workable engagement on uploaded metrics — comment sample is too small for conversion reads. Lean awareness / top-of-funnel candidate rather than a hard pass.",
     };
   }
+
+  if (awareness && strongReach && engagement >= 40 && overall >= 58) {
+    return {
+      decision: "Strong Candidate",
+      rationale:
+        "Reach and engagement align with your stated awareness goal — distribution power outweighs thin conversion evidence in uploads.",
+    };
+  }
+
+  const meetsDefaultStrongBar =
+    overall >= 68 && (strong >= 2 || (strongReach && engagement >= 55));
+  const meetsAwarenessStrongBar =
+    awareness && overall >= 62 && strongReach && engagement >= 45;
+
+  if (meetsDefaultStrongBar || meetsAwarenessStrongBar) {
+    if (conversion && lowIntentEvidence) {
+      return {
+        decision: "Watchlist",
+        rationale:
+          "Overall signals are solid, but your conversion goal needs stronger purchase-intent evidence — re-sample comments or run a conversion pilot before escalating.",
+      };
+    }
+    if (conversion && intentConfidence === "medium" && intent < 50) {
+      return {
+        decision: "Watchlist",
+        rationale:
+          "Mixed conversion signals — reach and engagement may support a test, but purchase-intent language in uploads is not yet strong enough for a conversion-forward Strong Candidate call.",
+      };
+    }
+    return {
+      decision: "Strong Candidate",
+      rationale: conversion
+        ? "Multiple uploaded commercial signals align for your conversion goal — pending your risk tolerance and offer fit."
+        : awareness
+          ? "Reach and engagement support your stated awareness objective — proceed with top-of-funnel KPIs."
+          : "Multiple uploaded commercial signals align — this profile may support measurable campaign ROI, pending your risk tolerance.",
+    };
+  }
+
+  if (overall >= 42 || (strongReach && decentEngagement)) {
+    return {
+      decision: "Watchlist",
+      rationale: awareness
+        ? "Partial signals support an awareness-first read — reach may justify a low-risk test even when conversion evidence is thin."
+        : "Mixed or partial uploaded signals — reach and engagement may support awareness-first campaigns; re-check conversion evidence before larger spend.",
+    };
+  }
+
+  if (strongReach && reach >= 70) {
+    return {
+      decision: "Watchlist",
+      rationale:
+        "Reach strength is the standout signal in uploads — consider awareness-first partnership even when conversion evidence is thin.",
+    };
+  }
+
+  if (awareness && strongReach && decentEngagement) {
+    return {
+      decision: "Watchlist",
+      rationale:
+        "For your awareness campaign, reach and engagement in uploads outweigh thin conversion evidence — worth a shortlist or pilot.",
+    };
+  }
+
   return {
     decision: "Not Recommended",
-    rationale: "Pillars are weak across the board. Allocating campaign budget here would be reach-only spend with no conversion path.",
+    rationale: conversion
+      ? "Uploaded evidence is weak for your conversion-focused campaign — consider only if you can run a low-risk test or gather stronger intent data."
+      : "Uploaded evidence is weak across reach and engagement — allocating budget here may skew toward low-impact spend unless new uploads change the picture.",
   };
 }
 
@@ -297,12 +619,12 @@ function decisionConfidence(
   const variance = pillars.reduce((a, b) => a + (b - mean) ** 2, 0) / pillars.length;
   const stdev = Math.sqrt(variance);
 
-  // No sample = inherent uncertainty on the intent dimension.
+  // No sample = inherent uncertainty on the intent dimension — not a negative read.
   if (commentTotal === 0) {
     return {
       confidence: "Low",
       reason:
-        "Confidence is capped — no comment sample was provided, so audience intent is inferred from a baseline, not measured.",
+        "Confidence is capped — no comment sample was provided, so purchase intent is unmeasured (neutral baseline applied, not penalized as zero intent).",
     };
   }
 
@@ -359,83 +681,110 @@ function buildMemo(report: {
     : `${Math.round(input.followers / 1000)}K`;
 
   const erPct =
-    isEngagementKnown(input) || input.engagementComponentsUsed?.length
-      ? `${(scoringEngagementRate(input) * 100).toFixed(1)}%`
+    isEngagementKnown(input) ||
+    input.engagementComponentsUsed?.length ||
+    input.avgViews > 0
+      ? formatEngagementRateForDisplay(input)
       : "limited engagement inputs (add post screenshots for likes, comments, shares)";
   const growthPct = isGrowthKnown(input) ? `${Math.round(input.growthRate30d! * 100)}%` : "unknown";
+  const reachInfo = reachTier(input.followers, input.avgViews);
+  const archetype = creatorArchetypeLabel(
+    pillars.reach,
+    pillars.engagement,
+    pillars.growth,
+    commentIntent,
+    input.followers,
+    input.avgViews
+  );
 
-  // Executive summary
+  // Executive summary — concise, evidence-aware
   let executiveSummary: string;
   if (decision === "Strong Candidate") {
-    executiveSummary = `${input.name} is a ${followersK}-follower ${input.niche.toLowerCase()} creator on ${input.platform} with ${erPct} engagement signal and ${growthPct === "unknown" ? "unstated 30-day growth" : "+" + growthPct + " 30-day growth"}. Pillar scores converge on commercial readiness — this is a sign-now profile, not a watchlist.`;
+    executiveSummary = `${input.name} (${followersK} on ${input.platform}, ${archetype}) shows ${erPct}${growthPct === "unknown" ? "" : ` and +${growthPct} 30-day growth`}. ${reachInfo.label} (views/followers ≈ ${(reachInfo.ratio * 100).toFixed(0)}%). Current visible signals suggest commercial potential — treat as a candidate for outreach, not a guaranteed converter.`;
   } else if (decision === "Watchlist") {
-    executiveSummary = `${input.name} is a ${followersK}-follower ${input.niche.toLowerCase()} creator on ${input.platform} with ${erPct} engagement signal and ${growthPct === "unknown" ? "unstated 30-day growth" : "+" + growthPct + " 30-day growth"}. Signal is mixed — one or two pillars are working, but commercial conversion isn't proven yet.`;
+    executiveSummary = `${input.name} (${followersK} on ${input.platform}, ${archetype}) shows ${reachInfo.label} with ${erPct}${growthPct === "unknown" ? "" : ` and +${growthPct} growth`}. ${commentIntent.intentConfidence === "low" ? "Purchase-intent evidence is limited in uploads — lean awareness / top-of-funnel candidate." : "Evidence is incomplete; a low-risk test may be appropriate before larger spend."}`;
   } else {
-    executiveSummary = `${input.name} is a ${followersK}-follower ${input.niche.toLowerCase()} creator on ${input.platform} with ${erPct} engagement signal. Pillar scores are weak across reach, intent, or growth — partnership economics don't pencil out at current signal.`;
+    executiveSummary = `${input.name} (${followersK} on ${input.platform}) shows limited commercial evidence in uploads (${erPct}, ${reachInfo.label}). Partnership economics look uncertain from the current sample.`;
   }
 
-  // Why this creator matters
-  const audienceShape = pillars.intent >= 60
-    ? "audiences that already speak in purchase language"
-    : pillars.engagement >= 60
-      ? "engaged communities that respond, not just watch"
-      : "a recognizable presence in the niche";
-  const whyMatters = `${input.niche} creators with ${audienceShape} are the shortest path to brand-paid conversion. ${input.brandCategory ? `For ${input.brandCategory} brands specifically, the niche overlap is a natural anchor.` : "Niche fit is more durable than reach, and this profile is anchored in a real vertical."}`;
+  const whyMatters = `For ${input.niche.toLowerCase()} campaigns, uploaded engagement and comment patterns help estimate whether an audience may respond to sponsored content — not whether they will buy.${input.campaignGoal ? ` Your stated goal is ${input.campaignGoal} — this evaluation weights signals accordingly.` : ""} ${input.brandCategory ? `Category fit with ${input.brandCategory} is one lens; conversion still depends on offer and creative.` : "Niche context matters, but the uploaded sample is only a partial view."}`;
 
-  // Commercial upside
   const upsideDrivers: string[] = [];
-  if (pillars.intent >= 60) upsideDrivers.push(`${commentIntent.purchasePct}% of comments already carry purchase language`);
-  if (pillars.engagement >= 60 && isEngagementKnown(input)) {
-    upsideDrivers.push(`${erPct} engagement materially exceeds the tier baseline`);
+  if (pillars.reach >= 60) {
+    upsideDrivers.push(`${reachInfo.label} (${followersK} followers, views/followers ≈ ${(reachInfo.ratio * 100).toFixed(0)}%)`);
+  }
+  if (pillars.intent >= 60 && commentIntent.intentConfidence !== "low") {
+    upsideDrivers.push(commentIntent.commercialSummary);
+  }
+  if (pillars.engagement >= 60) {
+    upsideDrivers.push(erPct);
   }
   if (pillars.growth >= 60 && isGrowthKnown(input)) {
-    upsideDrivers.push(`+${growthPct} 30-day growth widens the audience ceiling fast`);
+    upsideDrivers.push(`+${growthPct} 30-day growth in uploaded profile/analytics data`);
   }
-  if (brandFitScore >= 60) upsideDrivers.push(`${brandFitScore}/100 brand-fit score signals a natural commercial alignment`);
+  if (brandFitScore >= 60)
+    upsideDrivers.push(`${brandFitScore}/100 brand-fit score vs your category inputs`);
   const spreadLine = spreadMemoLine(input);
   if (spreadLine && !spreadLine.startsWith("Share/repost data not")) {
     upsideDrivers.push(spreadLine.replace(/\.$/, ""));
   }
-  const commercialUpside = upsideDrivers.length > 0
-    ? `The commercial upside concentrates in ${upsideDrivers.length} dimension${upsideDrivers.length > 1 ? "s" : ""}: ${upsideDrivers.join("; ")}. Together, these are the levers brands price into deal value.`
-    : `Commercial upside is muted at the moment — the standout pillars haven't separated from the tier baseline. Watch the next 30 days for one dimension to break out.`;
+  const commercialUpside =
+    upsideDrivers.length > 0
+      ? `Possible upside based on uploads: ${upsideDrivers.join("; ")}. These are directional signals — not proof of sponsored-post performance.`
+      : `Uploaded evidence does not yet show a standout commercial dimension. Re-check after more post or comment screenshots.`;
 
-  // Audience signal
-  const audienceSignal = commentIntent.total > 0
-    ? `Audience signal reads as: ${commentIntent.purchasePct}% purchase intent · ${commentIntent.curiosityPct}% curiosity · ${commentIntent.passivePct}% passive. ${commentIntent.interpretation}`
-    : `Audience signal is unread — no comments were sampled. Add 15–30 recent comments to convert this from a directional estimate to a real read.`;
+  const audienceSignal =
+    commentIntent.total > 0
+      ? `Uploaded comment sample (${commentIntent.total} lines, ${commentIntent.intentConfidence} confidence): ${commentIntent.commercialSummary} ${commentIntent.interpretation}`
+      : `No comments were uploaded — audience intent is not measured from comments in this evaluation (neutral baseline applied).`;
 
-  // Monetization gap
   let monetizationGap: string;
   if (gap === "Strong monetization") {
-    monetizationGap = "No structural gap to call out — reach and intent are both present. The remaining lift is packaging: rate card, deck, and a tighter brand-side pitch.";
+    monetizationGap =
+      "Uploaded reach and comment patterns both look workable — remaining uncertainty is mostly offer, creative, and pricing fit.";
+  } else if (gap === "High traffic, under-sampled intent") {
+    monetizationGap =
+      "Reach appears stronger than the comment evidence supports — treat as awareness-first until a larger comment sample is available.";
   } else if (gap === "High traffic, weak monetization") {
-    monetizationGap = "The gap is conversion language. Reach is real, but comments don't ask to buy — meaning a brand pays for impressions, not action. Fixing this is the #1 lever for deal value.";
+    monetizationGap =
+      "Reach appears stronger than purchase-intent language in uploads — brands may need awareness-first framing or stronger CTAs.";
   } else if (gap === "Low traffic, strong potential") {
-    monetizationGap = "The gap is scale. Commercial language is already strong, but audience size limits the absolute deal ceiling. Compound the existing intent into reach to unlock the next tier of pricing.";
+    monetizationGap =
+      "Comment sample suggests relatively stronger commercial language, but audience scale in uploads is limited — upside may be niche, not mass.";
   } else {
-    monetizationGap = "The gap is balance. Reach and intent sit at the same tier — fine, but unremarkable. Without a standout dimension, deal negotiations default to tier median.";
+    monetizationGap =
+      "Reach and intent signals in uploads sit at a similar level — no clear structural gap, but also no clear premium lever.";
   }
 
-  // Risk factors
   const risks: string[] = [];
-  if (pillars.engagement < 40) risks.push("engagement quality is below the tier baseline");
-  if (pillars.growth < 40) risks.push("growth has stalled in the last 30 days");
-  if (pillars.intent < 40) risks.push("comment intent is decorative rather than commercial");
-  if (commentIntent.total === 0) risks.push("no audience sample was provided");
-  if (input.brandCategory && brandFitScore < 50) risks.push(`${input.brandCategory} sits outside the natural niche`);
-  const riskFactors = risks.length > 0
-    ? `Key risks to flag: ${risks.join("; ")}. Each is recoverable, but they compound when stacked.`
-    : `No structural risks at this snapshot — the pillars are aligned. Monitor for over-saturation if sponsored posts begin to outnumber editorial content.`;
+  if (pillars.engagement < 40) risks.push("engagement metrics in uploads sit below typical tier expectations");
+  if (pillars.growth < 40 && isGrowthKnown(input)) risks.push("30-day growth signal looks soft in uploaded data");
+  if (
+    pillars.intent < 40 &&
+    commentIntent.intentConfidence !== "low" &&
+    commercialSignalPct(commentIntent) < 20
+  ) {
+    risks.push("uploaded comment sample shows limited commercial or product curiosity language");
+  }
+  if (commentIntent.intentConfidence === "low" && commentIntent.total > 0) {
+    risks.push("comment sample is too small for firm purchase-intent conclusions");
+  }
+  if (commentIntent.total === 0) risks.push("no comment sample was uploaded — intent uses neutral baseline");
+  if (input.brandCategory && brandFitScore < 50)
+    risks.push(`${input.brandCategory} may sit outside the creator's natural niche`);
+  const riskFactors =
+    risks.length > 0
+      ? `Caveats from limited evidence: ${risks.join("; ")}. Any of these may shift with fuller screenshots or a pilot post.`
+      : `No major red flags in the uploaded sample — still treat as partial evidence until campaign performance is observed.`;
 
-  // Recommended strategy
   let recommendedStrategy: string;
+  const goalPrefix = input.campaignGoal ? `For a ${input.campaignGoal} campaign: ` : "";
   if (decision === "Strong Candidate") {
-    recommendedStrategy = `Move to terms within 7 days. Lead with a 2-post paid placement at fixed fee plus an affiliate kicker on the second post — that structure tests the conversion claim without committing to a long-form contract.`;
+    recommendedStrategy = `${goalPrefix}Consider outreach with a structured test (e.g. one or two paid posts with saves/reply KPIs). Move to larger fees only if the pilot matches uploaded signals.`;
   } else if (decision === "Watchlist") {
-    recommendedStrategy = `Run a low-cost pilot (one paid post with explicit KPIs on saves, replies, and intent-laden comments). Re-evaluate after 30 days. Do not commit to retainer-shaped spend until the conversion side of the funnel is proven.`;
+    recommendedStrategy = `${goalPrefix}Consider an awareness-first or gifting pilot (${archetype} profile). Re-evaluate conversion KPIs after 30 days with fresh post and comment screenshots (target 30+ comment lines).`;
   } else {
-    recommendedStrategy = `Pass for now. Re-screen in 60 days only if 30-day growth crosses 10% AND engagement quality moves above the tier baseline. Don't spend reach-only budget chasing this profile today.`;
+    recommendedStrategy = `${goalPrefix}Pass for now unless new uploads show stronger reach, engagement, or a larger comment sample with purchase-intent language.`;
   }
 
   return {
@@ -446,16 +795,21 @@ function buildMemo(report: {
     monetizationGap,
     riskFactors,
     recommendedStrategy,
+    creatorArchetype: archetype,
   };
 }
 
-function buildOutreach(input: AnalyzeInput, decision: Decision): OutreachMessages {
+function buildOutreach(
+  input: AnalyzeInput,
+  decision: Decision,
+  reach: number
+): OutreachMessages {
   const name = input.name;
   const niche = input.niche.toLowerCase();
   const followersK = input.followers >= 1_000_000
     ? `${(input.followers / 1_000_000).toFixed(1)}M`
     : `${Math.round(input.followers / 1000)}K`;
-  const erPct = (scoringEngagementRate(input) * 100).toFixed(1);
+  const erPct = (scoringEngagementRate(input).rate * 100).toFixed(1);
   const growthSnippet = isGrowthKnown(input)
     ? `+${Math.round(input.growthRate30d! * 100)}% in 30 days`
     : "steady audience build at your current tier";
@@ -488,16 +842,30 @@ quick question: are you fielding brand inquiries directly right now, or going th
 — [Your name]`;
 
   if (decision === "Not Recommended") {
-    // Soften the brand outreach to feel honest, not over-sold
+    const strongReach = reach >= 65;
+    if (strongReach) {
+      return {
+        brand: `Hi ${name},
+
+I've been enjoying your ${niche} content — ${followersK} tier with strong distribution (${erPct}% engagement). For awareness campaigns we typically shortlist profiles at your reach band even when comment samples are thin.
+
+We're not moving to paid budget on conversion KPIs yet, but happy to stay in touch for top-of-funnel tests or gifting pilots if timing aligns.
+
+— [Your name]`,
+        mcn,
+        warmDm,
+      };
+    }
     return {
       brand: `Hi ${name},
 
-I've enjoyed your ${niche} content. Honest read: we typically wait for one of (a) engagement > 4% (b) +10% 30-day growth (c) clear purchase intent in comments before we commit paid budget.
+I've enjoyed your ${niche} content. Honest read: we typically wait for stronger reach, engagement, or a fuller comment sample before we commit paid budget.
 
-Worth staying in touch — happy to re-engage when those signals shift. In the meantime, if you have a recent campaign performance recap I should look at, that would change the picture.
+Worth staying in touch — happy to re-engage when those signals shift. If you have a recent campaign performance recap I should look at, that would change the picture.
 
 — [Your name]`,
-      mcn, warmDm,
+      mcn,
+      warmDm,
     };
   }
 
@@ -597,33 +965,59 @@ export function buildReport(input: AnalyzeInput, mode: "openai" | "rule_based" =
   const commentIntent = commentIntentAnalysis(inputEnriched.comments);
   const erS = scoringEngagementRate(inputEnriched);
   const grS = scoringGrowthRate(inputEnriched);
-  const engagement = engagementScore(erS, inputEnriched.avgViews, inputEnriched.followers);
+  const engagement = engagementScore(erS.rate, erS.basis);
   const reach = reachScore(inputEnriched.followers, inputEnriched.avgViews);
   const growth = growthScore(grS);
   const intent = intentScore(commentIntent);
+  const weights = pillarWeights(commentIntent.intentConfidence, inputEnriched.campaignGoal);
 
   const overallScore = Math.round(
-    engagement * 0.35 + reach * 0.25 + growth * 0.25 + intent * 0.15
+    engagement * weights.engagement +
+      reach * weights.reach +
+      growth * weights.growth +
+      intent * weights.intent
   );
 
-  const monetization = monetizationVerdict(overallScore, intent, reach);
+  const role = recommendedRole(
+    reach,
+    engagement,
+    growth,
+    commentIntent,
+    inputEnriched.followers,
+    inputEnriched.avgViews
+  );
+
+  const reachInfo = reachTier(inputEnriched.followers, inputEnriched.avgViews);
+  const monetization = monetizationVerdict(
+    overallScore,
+    intent,
+    reach,
+    commentIntent.intentConfidence
+  );
   const growthSec = growthSignal(
     growth,
     isGrowthKnown(inputEnriched) ? inputEnriched.growthRate30d : undefined
   );
-  const engagementSec = engagementQuality(
-    engagement,
-    isEngagementKnown(inputEnriched) ? inputEnriched.engagementRate : undefined,
-    erS
-  );
-  const gap = trafficVsMonetizationGap(reach, intent);
+  const engagementSec = engagementQuality(engagement, erS, reachInfo.label);
+  const gap = trafficVsMonetizationGap(reach, intent, commentIntent.intentConfidence);
   const fit = brandFit(
     inputEnriched.niche,
     intent,
     reach,
-    inputEnriched.brandCategory
+    engagement,
+    inputEnriched.brandCategory,
+    commentIntent.intentConfidence,
+    inputEnriched.campaignGoal
   );
-  const { decision, rationale } = finalDecision(overallScore, engagement, growth, intent);
+  const { decision, rationale } = finalDecision(
+    overallScore,
+    engagement,
+    growth,
+    intent,
+    reach,
+    commentIntent.intentConfidence,
+    inputEnriched.campaignGoal
+  );
   let { confidence, reason: confidenceReason } = decisionConfidence(
     decision,
     [engagement, reach, growth, intent],
@@ -645,14 +1039,14 @@ export function buildReport(input: AnalyzeInput, mode: "openai" | "rule_based" =
     gap: gap.label,
     brandFitScore: fit.score,
   });
-  const outreach = buildOutreach(inputEnriched, decision);
+  const outreach = buildOutreach(inputEnriched, decision, reach);
   const nextActions = buildNextActions(
     decision,
     growth,
     intent,
     inputEnriched.comments.length > 0
   );
-  const signalInsights = buildSignalInsights(inputEnriched);
+  const signalInsights = buildSignalInsights(inputEnriched, commentIntent);
 
   return {
     input: inputEnriched,
@@ -666,6 +1060,7 @@ export function buildReport(input: AnalyzeInput, mode: "openai" | "rule_based" =
     brandFit: fit,
     action,
     decision,
+    recommendedRole: role,
     decisionRationale: rationale,
     decisionConfidence: confidence,
     decisionConfidenceReason: confidenceReason,
