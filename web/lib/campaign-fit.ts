@@ -40,25 +40,36 @@ function goalConditionedFitScore(report: Report): number {
   return brandFit.score;
 }
 
+function hasMegaDistribution(input: Report["input"], reach: number): boolean {
+  return input.followers >= 1_000_000 && input.avgViews >= 150_000 && reach >= 72;
+}
+
 export function campaignFitFromReport(report: Report): CampaignFit {
   const score = goalConditionedFitScore(report);
   const goal = report.input.campaignGoal;
-  const { decision, pillarScores } = report;
+  const { decision, pillarScores, input } = report;
+  const strongReach = pillarScores.reach >= 65;
+  const mega = hasMegaDistribution(input, pillarScores.reach);
 
   if (decision === "Not Recommended") {
     if (
-      isAwarenessGoal(goal) &&
-      pillarScores.reach >= 65 &&
-      pillarScores.engagement >= 38
+      (isAwarenessGoal(goal) || !goal) &&
+      strongReach &&
+      pillarScores.engagement >= 35
     ) {
-      return score >= 50 ? "Medium" : "Low";
+      return score >= 45 ? "Medium" : "Low";
     }
     return "Low";
   }
 
+  if (decision === "Watchlist" && (mega || (strongReach && pillarScores.engagement >= 38))) {
+    if (score >= 50 || mega) return "Medium";
+    if (score >= 40) return "Medium";
+  }
+
   if (decision === "Strong Candidate" && score >= 50) return "High";
   if (score >= 65) return "High";
-  if (score >= 45) return "Medium";
+  if (score >= 45 || (strongReach && decision === "Watchlist")) return "Medium";
   return "Low";
 }
 

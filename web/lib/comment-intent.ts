@@ -303,7 +303,12 @@ export function intentScoreFromSample(intent: CommentIntent): number {
         );
 
   if (intent.intentConfidence === "low") {
-    return Math.round(50 + (raw - 50) * 0.35);
+    const damped = 50 + (raw - 50) * 0.35;
+    const commercial = commercialSignalPct(intent);
+    if (commercial >= 12) {
+      return Math.round(Math.max(damped, 48));
+    }
+    return Math.round(damped);
   }
   if (intent.intentConfidence === "medium") {
     return Math.round(50 + (raw - 50) * 0.65);

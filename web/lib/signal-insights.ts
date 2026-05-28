@@ -15,6 +15,9 @@ export interface SignalInsights {
   evidenceConfidence: string;
   evidenceConfidenceLevel: EvidenceConfidenceLevel;
   purchaseIntentNote: string;
+  reachConfidence: string;
+  reachConfidenceLevel: EvidenceConfidenceLevel;
+  intentConfidenceDetail: string;
 }
 
 export const PURCHASE_INTENT_NOTE =
@@ -112,6 +115,63 @@ export function buildEvidenceConfidence(
   return { level, detail };
 }
 
+function buildReachConfidence(input: AnalyzeInput): {
+  level: EvidenceConfidenceLevel;
+  detail: string;
+} {
+  const followers = input.followers;
+  const views = input.avgViews;
+  const ratio = followers > 0 && views > 0 ? views / followers : 0;
+
+  if (followers >= 1_000_000 && views >= 200_000) {
+    return {
+      level: "High",
+      detail: `High reach confidence — ${(followers / 1_000_000).toFixed(1)}M followers with ~${Math.round(views / 1000)}K average views in uploads indicates strong distribution power.`,
+    };
+  }
+  if (followers >= 1_000_000 && views >= 100_000) {
+    return {
+      level: "High",
+      detail: `High reach confidence — mega-tier follower count with strong per-post view delivery in uploads (views/followers ≈ ${(ratio * 100).toFixed(0)}%).`,
+    };
+  }
+  if (followers >= 250_000 && views >= 80_000) {
+    return {
+      level: "High",
+      detail: `High reach confidence — macro audience with solid view delivery in uploads.`,
+    };
+  }
+  if (followers >= 50_000 && (views >= 30_000 || ratio >= 0.15)) {
+    return {
+      level: "Moderate",
+      detail: `Moderate reach confidence — rising/macro tier with workable view delivery in uploads.`,
+    };
+  }
+  if (followers >= 10_000) {
+    return {
+      level: "Moderate",
+      detail: "Moderate reach confidence — follower scale is visible; add more post screenshots to confirm view consistency.",
+    };
+  }
+  return {
+    level: "Low",
+    detail: "Low reach confidence — limited follower or view data in uploads.",
+  };
+}
+
+function buildIntentConfidenceDetail(commentIntent: CommentIntent): string {
+  if (commentIntent.total === 0) {
+    return "Intent confidence: low — no comment sample uploaded (unmeasured, not absent commercial value).";
+  }
+  const level =
+    commentIntent.intentConfidence === "high"
+      ? "high"
+      : commentIntent.intentConfidence === "medium"
+        ? "moderate"
+        : "low";
+  return `Intent confidence: ${level} — based on ${commentIntent.total} uploaded comment lines; ${commentIntent.intentConfidence === "low" ? "under-sampled for conversion conclusions" : "sample supports directional commercial reads"}.`;
+}
+
 export function buildMonetizationSignal(
   commentIntent: CommentIntent,
   campaignGoal?: AnalyzeInput["campaignGoal"]
@@ -190,6 +250,7 @@ export function buildSignalInsights(
         : "Low — add profile, post, and comment screenshots for a stronger read.";
 
   const evidence = buildEvidenceConfidence(input, commentIntent);
+  const reachConf = buildReachConfidence(input);
 
   return {
     engagementQuality,
@@ -200,6 +261,9 @@ export function buildSignalInsights(
     evidenceConfidence: evidence.detail,
     evidenceConfidenceLevel: evidence.level,
     purchaseIntentNote: PURCHASE_INTENT_NOTE,
+    reachConfidence: reachConf.detail,
+    reachConfidenceLevel: reachConf.level,
+    intentConfidenceDetail: buildIntentConfidenceDetail(commentIntent),
   };
 }
 

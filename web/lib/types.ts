@@ -25,14 +25,19 @@ export type GapState =
   | "Strong monetization"
   | "Balanced"
   | "High traffic, under-sampled intent"
-  | "High traffic, weak monetization"
+  | "High traffic, limited conversion evidence"
   | "Low traffic, strong potential";
 export type Action = "Sign" | "Pilot test" | "Monitor" | "Pass";
 export type Decision = "Strong Candidate" | "Watchlist" | "Not Recommended";
 export type DecisionConfidence = "High" | "Medium" | "Low";
 export type ActionPriority = "now" | "next" | "watch";
 /** Primary creator role for campaign mix planning (separate from overall score). */
-export type RecommendedRole = "Awareness" | "Community" | "Conversion" | "Distribution";
+export type RecommendedRole =
+  | "Awareness"
+  | "Community"
+  | "Conversion"
+  | "Distribution"
+  | "BrandFit";
 
 export interface AnalyzeInput {
   /** Primary creator identifier — typically the visible handle. */
@@ -139,6 +144,11 @@ export interface SignalInsights {
   evidenceConfidenceLevel: "Low" | "Moderate" | "High";
   /** Footnote near purchase-intent signals. */
   purchaseIntentNote: string;
+  /** Reach / distribution read from followers + views in uploads. */
+  reachConfidence?: string;
+  reachConfidenceLevel?: "Low" | "Moderate" | "High";
+  /** Purchase-intent read from comment sample only. */
+  intentConfidenceDetail?: string;
 }
 
 export interface Report {

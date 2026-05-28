@@ -18,7 +18,7 @@ const PILLAR_LABELS: Record<keyof Report["pillarScores"], string> = {
   engagement: "Engagement",
   reach: "Reach",
   growth: "Growth",
-  intent: "Purchase intent",
+  intent: "Conversion evidence",
 };
 
 // ---------------- Insight-first blocks ----------------
@@ -38,8 +38,18 @@ function CampaignFit({ report }: { report: Report }) {
   );
 }
 
+const ROLE_LABELS: Record<Report["recommendedRole"], string> = {
+  Awareness: "Awareness Creator",
+  Community: "Community Creator",
+  Conversion: "Conversion Creator",
+  Distribution: "Viral Distribution Creator",
+  BrandFit: "Brand Fit / Aesthetic Creator",
+};
+
 function CommercialPotential({ report }: { report: Report }) {
   const { input } = report;
+  const archetype =
+    report.memo.creatorArchetype ?? ROLE_LABELS[report.recommendedRole];
   return (
     <section className="insight-panel">
       <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
@@ -53,6 +63,9 @@ function CommercialPotential({ report }: { report: Report }) {
           </div>
           <p className="mt-1 text-sm text-neutral-500">
             {input.name} · {input.platform} · {input.niche}
+          </p>
+          <p className="mt-2 text-sm font-medium text-neutral-700">
+            Recommended role: {archetype}
           </p>
         </div>
         <div className="flex flex-wrap gap-2 sm:justify-end">
@@ -140,7 +153,7 @@ function KeySignals({ report }: { report: Report }) {
           score: report.overallScore,
         },
         {
-          label: "Purchase intent",
+          label: "Conversion evidence",
           headline: report.monetization.label,
           detail: report.commentIntent.commercialSummary,
           score: report.pillarScores.intent,

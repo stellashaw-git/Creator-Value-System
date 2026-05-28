@@ -31,6 +31,13 @@ import type {
 
 type EngagementRateBasis = "views" | "followers" | "proxy";
 type ReachTier = "weak" | "decent" | "strong" | "breakout";
+type FollowerTier = "micro" | "rising" | "macro" | "mega";
+
+interface ReachAssessment {
+  tier: ReachTier;
+  ratio: number;
+  label: string;
+}
 
 interface ScoringEngagementRate {
   rate: number;
@@ -131,12 +138,47 @@ function formatEngagementRateForDisplay(input: AnalyzeInput): string {
   return `~${pct}% reach-based engagement proxy`;
 }
 
-function reachTier(followers: number, avgViews: number): { tier: ReachTier; ratio: number; label: string } {
+function followerTier(followers: number): FollowerTier {
+  if (followers >= 1_000_000) return "mega";
+  if (followers >= 250_000) return "macro";
+  if (followers >= 50_000) return "rising";
+  return "micro";
+}
+
+/** Reach tier uses absolute delivery for macro/mega, then views/followers ratio. */
+function reachTier(followers: number, avgViews: number): ReachAssessment {
   const ratio = followers > 0 && avgViews > 0 ? avgViews / followers : 0;
+
+  if (followers >= 1_000_000) {
+    if (avgViews >= 300_000) {
+      return { tier: "breakout", ratio, label: "Mega distribution power" };
+    }
+    if (avgViews >= 150_000) {
+      return { tier: "breakout", ratio, label: "Strong mega-scale delivery" };
+    }
+    if (avgViews >= 80_000) {
+      return { tier: "strong", ratio, label: "Solid mega-tier delivery" };
+    }
+  }
+  if (followers >= 500_000 && avgViews >= 120_000) {
+    return { tier: "strong", ratio, label: "Strong distribution power" };
+  }
+  if (followers >= 250_000 && avgViews >= 80_000) {
+    return { tier: "strong", ratio, label: "Strong reach delivery" };
+  }
+  if (followers >= 50_000 && avgViews >= 40_000) {
+    return { tier: "decent", ratio, label: "Workable distribution at scale" };
+  }
+
   if (ratio >= 0.5) return { tier: "breakout", ratio, label: "Breakout reach" };
   if (ratio >= 0.25) return { tier: "strong", ratio, label: "Strong reach" };
   if (ratio >= 0.1) return { tier: "decent", ratio, label: "Decent reach" };
   return { tier: "weak", ratio, label: "Weak reach" };
+}
+
+function hasStrongDistribution(followers: number, avgViews: number): boolean {
+  const { tier } = reachTier(followers, avgViews);
+  return tier === "breakout" || tier === "strong";
 }
 
 function isAwarenessGoal(goal?: CampaignGoal): boolean {
@@ -186,19 +228,54 @@ function scoringGrowthRate(input: AnalyzeInput): number {
 
 // ---------- 1–4. Pillar scores (0–100) ----------
 
-function engagementScore(er: number, basis: EngagementRateBasis): number {
-  const target = basis === "views" ? 0.06 : basis === "followers" ? 0.05 : 0.04;
-  return Math.round(Math.min(100, (er / target) * 100));
+function engagementTargetEr(
+  basis: EngagementRateBasis,
+  tier: FollowerTier
+): number {
+  const byTier: Record<FollowerTier, Record<EngagementRateBasis, number>> = {
+    micro: { views: 0.06, followers: 0.05, proxy: 0.04 },
+    rising: { views: 0.05, followers: 0.04, proxy: 0.035 },
+    macro: { views: 0.04, followers: 0.03, proxy: 0.03 },
+    mega: { views: 0.025, followers: 0.02, proxy: 0.025 },
+  };
+  return byTier[tier][basis];
+}
+
+function engagementScore(
+  er: number,
+  basis: EngagementRateBasis,
+  followers: number,
+  reachPillar: number
+): number {
+  const tier = followerTier(followers);
+  const target = engagementTargetEr(basis, tier);
+  let score = Math.min(100, (er / target) * 100);
+  if (tier === "mega" && reachPillar >= 68 && score < 42) {
+    score = 42;
+  }
+  if (tier === "macro" && reachPillar >= 65 && score < 38) {
+    score = 38;
+  }
+  return Math.round(score);
 }
 
 function reachScore(followers: number, avgViews: number): number {
   if (followers > 0 && avgViews > 0) {
     const { tier } = reachTier(followers, avgViews);
-    const tierBase =
+    let tierBase =
       tier === "breakout" ? 92 : tier === "strong" ? 78 : tier === "decent" ? 55 : 25;
+
+    if (followers >= 1_000_000 && avgViews >= 200_000) tierBase = Math.max(tierBase, 88);
+    else if (followers >= 1_000_000 && avgViews >= 100_000) tierBase = Math.max(tierBase, 82);
+    else if (followers >= 500_000 && avgViews >= 80_000) tierBase = Math.max(tierBase, 76);
+
     const fBoost = Math.min(18, Math.max(0, (Math.log10(Math.max(1, followers)) - 2) * 6));
-    const vBoost = Math.min(12, Math.max(0, (Math.log10(Math.max(1, avgViews)) - 1.5) * 5));
-    return Math.round(Math.min(100, tierBase + fBoost * 0.4 + vBoost * 0.35));
+    const vBoost = Math.min(16, Math.max(0, (Math.log10(Math.max(1, avgViews)) - 1.5) * 5.5));
+    const absViewBoost =
+      avgViews >= 500_000 ? 8 : avgViews >= 200_000 ? 5 : avgViews >= 100_000 ? 3 : 0;
+    return Math.round(
+      Math.min(100, tierBase + fBoost * 0.35 + vBoost * 0.4 + absViewBoost)
+    );
   }
 
   const f = Math.max(1, followers);
@@ -206,6 +283,37 @@ function reachScore(followers: number, avgViews: number): number {
   const fScore = Math.min(100, (Math.log10(f) - 2) * 20);
   const vScore = avgViews > 0 ? Math.min(100, (Math.log10(v) - 1.5) * 22) : 0;
   return Math.round(Math.max(0, fScore * 0.65 + vScore * 0.35));
+}
+
+function adjustedOverallScore(
+  base: number,
+  reach: number,
+  engagement: number,
+  followers: number,
+  avgViews: number,
+  intentConfidence: IntentConfidence,
+  campaignGoal?: CampaignGoal
+): number {
+  let adjusted = base;
+  const megaDelivery = followers >= 1_000_000 && avgViews >= 150_000 && reach >= 72;
+  const strongDelivery =
+    hasStrongDistribution(followers, avgViews) && reach >= 65 && engagement >= 35;
+
+  if (megaDelivery) {
+    adjusted = Math.max(adjusted, engagement >= 38 ? 64 : 58);
+    if (reach >= 80 && engagement >= 40) adjusted = Math.max(adjusted, 68);
+    if (reach >= 85 && engagement >= 42) adjusted = Math.max(adjusted, 72);
+  } else if (strongDelivery) {
+    adjusted = Math.max(adjusted, 52);
+    if (engagement >= 40) adjusted = Math.max(adjusted, 56);
+  }
+
+  if (intentConfidence === "low" && reach >= 70) {
+    const floor = isAwarenessGoal(campaignGoal) ? 60 : isConversionGoal(campaignGoal) ? 52 : 55;
+    adjusted = Math.max(adjusted, floor);
+  }
+
+  return Math.min(100, Math.round(adjusted));
 }
 
 function growthScore(rate: number): number {
@@ -223,28 +331,53 @@ function creatorArchetypeLabel(
   growth: number,
   commentIntent: CommentIntent,
   followers: number,
-  avgViews: number
+  avgViews: number,
+  niche?: string
 ): string {
-  const { tier } = reachTier(followers, avgViews);
+  const { tier, label: reachLabel } = reachTier(followers, avgViews);
   const commercial = commercialSignalPct(commentIntent);
+  const tierName = followerTier(followers);
+
   if (
     commentIntent.intentConfidence !== "low" &&
     (commentIntent.purchasePct >= 15 || commercial >= 35)
   ) {
     return "Conversion Creator";
   }
-  if (tier === "breakout" || (reach >= 75 && engagement >= 55)) {
+
+  if (
+    (tier === "breakout" || reach >= 78) &&
+    (followers >= 500_000 || avgViews >= 150_000)
+  ) {
     return "Viral Distribution Creator";
   }
+
+  if (
+    reach >= 62 &&
+    commercial >= 15 &&
+    engagement < 58 &&
+    (commentIntent.productCuriosityPct >= 10 || commentIntent.styleReplicationPct >= 12)
+  ) {
+    return "Brand Fit / Aesthetic Creator";
+  }
+
   if (
     engagement >= 60 &&
     (commentIntent.productCuriosityPct >= 25 || commentIntent.curiosityPct >= 25)
   ) {
     return "Community Creator";
   }
-  if (reach >= 65 || growth >= 65) {
-    return "Awareness Creator";
+
+  if (tierName === "mega" || reach >= 65 || growth >= 65) {
+    return reachLabel.includes("distribution") || reachLabel.includes("delivery")
+      ? "Awareness Creator"
+      : "Awareness Creator";
   }
+
+  if (niche && ["Beauty", "Fashion", "Lifestyle", "Luxury"].includes(niche) && reach >= 55) {
+    return "Brand Fit / Aesthetic Creator";
+  }
+
   return "Awareness Creator";
 }
 
@@ -254,7 +387,8 @@ function recommendedRole(
   growth: number,
   commentIntent: CommentIntent,
   followers: number,
-  avgViews: number
+  avgViews: number,
+  niche?: string
 ): RecommendedRole {
   const label = creatorArchetypeLabel(
     reach,
@@ -262,11 +396,13 @@ function recommendedRole(
     growth,
     commentIntent,
     followers,
-    avgViews
+    avgViews,
+    niche
   );
   if (label === "Conversion Creator") return "Conversion";
   if (label === "Viral Distribution Creator") return "Distribution";
   if (label === "Community Creator") return "Community";
+  if (label === "Brand Fit / Aesthetic Creator") return "BrandFit";
   return "Awareness";
 }
 
@@ -329,9 +465,17 @@ function growthSignal(growth: number, rate: number | undefined): SectionLine<Qua
 function engagementQuality(
   engagement: number,
   er: ScoringEngagementRate,
-  reachLabel: string
+  reachLabel: string,
+  followers: number,
+  reachPillar: number
 ): SectionLine<Quality> {
   const erPct = (er.rate * 100).toFixed(1);
+  const tier = followerTier(followers);
+  const megaReachFirst =
+    tier === "mega" && reachPillar >= 65 && engagement >= 30;
+  const macroReachFirst =
+    tier === "macro" && reachPillar >= 62 && engagement >= 28;
+
   if (er.basis === "views") {
     if (engagement >= 70) {
       return {
@@ -339,15 +483,17 @@ function engagementQuality(
         detail: `${erPct}% engagement vs views — audience is actively responding relative to exposure. ${reachLabel}.`,
       };
     }
-    if (engagement >= 40) {
+    if (engagement >= 40 || megaReachFirst || macroReachFirst) {
       return {
         label: "Average",
-        detail: `${erPct}% engagement vs views — workable band for this tier. ${reachLabel}.`,
+        detail: megaReachFirst || macroReachFirst
+          ? `${erPct}% engagement vs views — typical for ${tier === "mega" ? "mega" : "macro"} creators where distribution delivery matters more than raw ER. ${reachLabel}.`
+          : `${erPct}% engagement vs views — workable band for this follower tier. ${reachLabel}.`,
       };
     }
     return {
       label: "Weak",
-      detail: `${erPct}% engagement vs views — interactions look light relative to views. ${reachLabel}.`,
+      detail: `${erPct}% engagement vs views — interactions look light relative to views in uploads. ${reachLabel}.`,
     };
   }
   if (er.basis === "followers") {
@@ -357,19 +503,23 @@ function engagementQuality(
         detail: `${erPct}% engagement vs followers — audience is actively responding. Views were not available; follower-based ER used.`,
       };
     }
-    if (engagement >= 40) {
+    if (engagement >= 40 || megaReachFirst || macroReachFirst) {
       return {
         label: "Average",
-        detail: `${erPct}% engagement vs followers — normal band for this tier. Views were not available; follower-based ER used.`,
+        detail: megaReachFirst || macroReachFirst
+          ? `${erPct}% engagement vs followers — normal for large creators; prioritize view delivery and brand fit over follower ER alone.`
+          : `${erPct}% engagement vs followers — normal band for this follower tier. Views were not available; follower-based ER used.`,
       };
     }
     return {
       label: "Weak",
-      detail: `${erPct}% engagement vs followers — interactions are below typical tier expectations. Views were not available; follower-based ER used.`,
+      detail: `${erPct}% engagement vs followers — below typical expectations for smaller tiers. Views were not available; follower-based ER used.`,
     };
   }
+  const label =
+    engagement >= 55 || megaReachFirst || macroReachFirst ? "Average" : "Weak";
   return {
-    label: engagement >= 55 ? "Average" : "Weak",
+    label,
     detail: `Limited engagement inputs — reach-based proxy (~${erPct}% equivalent ER). ${reachLabel}.`,
   };
 }
@@ -395,9 +545,9 @@ function trafficVsMonetizationGap(
   }
   if (reach >= 60 && intent < 45 && intentConfidence !== "low") {
     return {
-      label: "High traffic, weak monetization",
+      label: "High traffic, limited conversion evidence",
       detail:
-        "Audience size appears real in uploads, but comment sample shows limited buying language — common when admiration outpaces commerce intent.",
+        "Strong reach in uploads; comment sample shows limited purchase language — strong awareness potential; conversion fit needs validation with a larger sample.",
     };
   }
   if (reach >= 60 && intent < 45) {
@@ -611,7 +761,9 @@ function finalDecision(
 function decisionConfidence(
   decision: Decision,
   pillars: number[],
-  commentTotal: number
+  commentTotal: number,
+  reachPillar: number,
+  intentConfidence: IntentConfidence
 ): { confidence: DecisionConfidence; reason: string } {
   const strong = pillars.filter((p) => p >= 65).length;
   const weak = pillars.filter((p) => p < 40).length;
@@ -619,12 +771,27 @@ function decisionConfidence(
   const variance = pillars.reduce((a, b) => a + (b - mean) ** 2, 0) / pillars.length;
   const stdev = Math.sqrt(variance);
 
-  // No sample = inherent uncertainty on the intent dimension — not a negative read.
+  if (reachPillar >= 70 && intentConfidence === "low" && decision === "Watchlist") {
+    return {
+      confidence: "Medium",
+      reason:
+        "Reach / distribution confidence is strong from uploads; purchase intent is under-sampled from comments — decision confidence is moderate, not weak overall.",
+    };
+  }
+
+  if (commentTotal === 0 && reachPillar >= 65) {
+    return {
+      confidence: "Medium",
+      reason:
+        "Reach confidence is strong from uploads; no comment sample was provided so conversion intent is unmeasured (neutral baseline, not zero intent).",
+    };
+  }
+
   if (commentTotal === 0) {
     return {
       confidence: "Low",
       reason:
-        "Confidence is capped — no comment sample was provided, so purchase intent is unmeasured (neutral baseline applied, not penalized as zero intent).",
+        "Evidence confidence is limited — no comment sample was provided, so purchase intent is unmeasured (neutral baseline applied, not penalized as zero intent).",
     };
   }
 
@@ -694,7 +861,8 @@ function buildMemo(report: {
     pillars.growth,
     commentIntent,
     input.followers,
-    input.avgViews
+    input.avgViews,
+    input.niche
   );
 
   // Executive summary — concise, evidence-aware
@@ -745,9 +913,9 @@ function buildMemo(report: {
   } else if (gap === "High traffic, under-sampled intent") {
     monetizationGap =
       "Reach appears stronger than the comment evidence supports — treat as awareness-first until a larger comment sample is available.";
-  } else if (gap === "High traffic, weak monetization") {
+  } else if (gap === "High traffic, limited conversion evidence") {
     monetizationGap =
-      "Reach appears stronger than purchase-intent language in uploads — brands may need awareness-first framing or stronger CTAs.";
+      "Strong awareness potential from reach; limited conversion evidence in the uploaded comment sample — validate with a larger sample or a conversion pilot before scaling spend.";
   } else if (gap === "Low traffic, strong potential") {
     monetizationGap =
       "Comment sample suggests relatively stronger commercial language, but audience scale in uploads is limited — upside may be niche, not mass.";
@@ -965,17 +1133,31 @@ export function buildReport(input: AnalyzeInput, mode: "openai" | "rule_based" =
   const commentIntent = commentIntentAnalysis(inputEnriched.comments);
   const erS = scoringEngagementRate(inputEnriched);
   const grS = scoringGrowthRate(inputEnriched);
-  const engagement = engagementScore(erS.rate, erS.basis);
   const reach = reachScore(inputEnriched.followers, inputEnriched.avgViews);
+  const engagement = engagementScore(
+    erS.rate,
+    erS.basis,
+    inputEnriched.followers,
+    reach
+  );
   const growth = growthScore(grS);
   const intent = intentScore(commentIntent);
   const weights = pillarWeights(commentIntent.intentConfidence, inputEnriched.campaignGoal);
 
-  const overallScore = Math.round(
+  const weightedOverall = Math.round(
     engagement * weights.engagement +
       reach * weights.reach +
       growth * weights.growth +
       intent * weights.intent
+  );
+  const overallScore = adjustedOverallScore(
+    weightedOverall,
+    reach,
+    engagement,
+    inputEnriched.followers,
+    inputEnriched.avgViews,
+    commentIntent.intentConfidence,
+    inputEnriched.campaignGoal
   );
 
   const role = recommendedRole(
@@ -984,7 +1166,8 @@ export function buildReport(input: AnalyzeInput, mode: "openai" | "rule_based" =
     growth,
     commentIntent,
     inputEnriched.followers,
-    inputEnriched.avgViews
+    inputEnriched.avgViews,
+    inputEnriched.niche
   );
 
   const reachInfo = reachTier(inputEnriched.followers, inputEnriched.avgViews);
@@ -998,7 +1181,13 @@ export function buildReport(input: AnalyzeInput, mode: "openai" | "rule_based" =
     growth,
     isGrowthKnown(inputEnriched) ? inputEnriched.growthRate30d : undefined
   );
-  const engagementSec = engagementQuality(engagement, erS, reachInfo.label);
+  const engagementSec = engagementQuality(
+    engagement,
+    erS,
+    reachInfo.label,
+    inputEnriched.followers,
+    reach
+  );
   const gap = trafficVsMonetizationGap(reach, intent, commentIntent.intentConfidence);
   const fit = brandFit(
     inputEnriched.niche,
@@ -1021,7 +1210,9 @@ export function buildReport(input: AnalyzeInput, mode: "openai" | "rule_based" =
   let { confidence, reason: confidenceReason } = decisionConfidence(
     decision,
     [engagement, reach, growth, intent],
-    commentIntent.total
+    commentIntent.total,
+    reach,
+    commentIntent.intentConfidence
   );
   const metricCoverage = inputEnriched.engagementComponentsUsed?.length ?? 0;
   if (metricCoverage < 2 && confidence === "High") {

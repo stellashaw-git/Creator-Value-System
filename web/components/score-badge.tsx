@@ -17,7 +17,13 @@ export function Badge({ label, tone }: Props) {
 export function toneFor(value: string): Props["tone"] {
   const positive = ["High", "Strong", "Sign", "Strong Candidate", "Strong monetization", "Low traffic, strong potential"];
   const warn = ["Medium", "Moderate", "Average", "Pilot test", "Monitor", "Watchlist", "Balanced"];
-  const negative = ["Low", "Weak", "Pass", "Not Recommended", "High traffic, weak monetization"];
+  const negative = [
+    "Low",
+    "Weak",
+    "Pass",
+    "Not Recommended",
+    "High traffic, limited conversion evidence",
+  ];
   if (positive.includes(value)) return "green";
   if (warn.includes(value)) return "amber";
   if (negative.includes(value)) return "red";
