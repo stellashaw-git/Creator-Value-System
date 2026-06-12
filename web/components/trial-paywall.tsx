@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useMounted } from "@/lib/use-mounted";
 import {
   canRunFreeEvaluation,
+  FREE_EVALUATION_LIMIT,
   getTrialUsage,
   isDevEvaluationLimitBypassed,
 } from "@/lib/trial";
@@ -33,7 +34,7 @@ export function TrialPaywall({ refreshKey = 0 }: { refreshKey?: number }) {
   return (
     <div className="mt-8 rounded-2xl border border-neutral-200/80 bg-neutral-50/90 px-5 py-5 sm:px-6">
       <p className="text-sm font-medium text-neutral-900">
-        You&apos;ve used your free evaluations.
+        You&apos;ve used your {FREE_EVALUATION_LIMIT} free evaluations for today.
       </p>
       <p className="mt-1.5 max-w-md text-sm leading-relaxed text-neutral-500">
         Join the founding user group for expanded access and early features.

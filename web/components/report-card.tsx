@@ -333,14 +333,20 @@ function ScoringDetail({ report }: { report: Report }) {
 export function ReportCard({
   report,
   onRestart,
+  onEditInputs,
+  onStartNew,
   savedId,
   showFeedback = true,
 }: {
   report: Report;
-  onRestart: () => void;
+  onRestart?: () => void;
+  onEditInputs?: () => void;
+  onStartNew?: () => void;
   savedId?: string;
   showFeedback?: boolean;
 }) {
+  const editInputs = onEditInputs ?? onRestart;
+  const startNew = onStartNew;
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -356,9 +362,22 @@ export function ReportCard({
               Saved →
             </Link>
           )}
-          <button type="button" onClick={onRestart} className="btn-secondary !py-2 !px-4 !text-sm">
-            New evaluation
+          <button
+            type="button"
+            onClick={editInputs}
+            className="btn-secondary !py-2 !px-4 !text-sm"
+          >
+            Edit inputs
           </button>
+          {startNew && (
+            <button
+              type="button"
+              onClick={startNew}
+              className="text-xs font-semibold text-neutral-500 hover:text-neutral-900"
+            >
+              Start new
+            </button>
+          )}
         </div>
       </div>
 

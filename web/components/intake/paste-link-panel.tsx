@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Platform } from "@/lib/types";
 import type { IntakePreviewResponse } from "@/lib/intake/types";
 import { isIntakePreviewError } from "@/lib/intake/types";
@@ -15,18 +15,39 @@ export interface IntakeRecognized {
 }
 
 interface PasteLinkPanelProps {
+  url?: string;
+  onUrlChange?: (url: string) => void;
+  recognized?: IntakeRecognized | null;
   onRecognized?: (result: IntakeRecognized) => void;
   screenshotUploadAnchorId?: string;
 }
 
 export function PasteLinkPanel({
+  url: urlProp,
+  onUrlChange,
+  recognized: recognizedProp,
   onRecognized,
   screenshotUploadAnchorId = "screenshot-upload",
 }: PasteLinkPanelProps) {
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = useState(urlProp ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [recognized, setRecognized] = useState<IntakeRecognized | null>(null);
+  const [recognized, setRecognized] = useState<IntakeRecognized | null>(
+    recognizedProp ?? null
+  );
+
+  useEffect(() => {
+    if (urlProp !== undefined) setUrl(urlProp);
+  }, [urlProp]);
+
+  useEffect(() => {
+    if (recognizedProp !== undefined) setRecognized(recognizedProp);
+  }, [recognizedProp]);
+
+  const updateUrl = (next: string) => {
+    setUrl(next);
+    onUrlChange?.(next);
+  };
 
   const scrollToScreenshots = () => {
     requestAnimationFrame(() => {
@@ -36,8 +57,7 @@ export function PasteLinkPanel({
     });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const recognizeLink = async () => {
     setError(null);
     setRecognized(null);
     const trimmed = url.trim();
@@ -87,28 +107,36 @@ export function PasteLinkPanel({
         We&apos;ll recognize the platform and guide what screenshots to add next.
       </p>
 
-      <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3 sm:flex-row">
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row">
         <input
-          type="url"
+          type="text"
           inputMode="url"
           autoComplete="off"
+          enterKeyHint="go"
           placeholder="https://www.instagram.com/creator/"
           className="min-w-0 flex-1 rounded-lg border border-neutral-200 px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-400 focus:outline-none focus:ring-1 focus:ring-neutral-300"
           value={url}
           onChange={(e) => {
-            setUrl(e.target.value);
+            updateUrl(e.target.value);
             if (error) setError(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void recognizeLink();
+            }
           }}
           aria-label="Creator profile URL"
         />
         <button
-          type="submit"
+          type="button"
           disabled={loading}
+          onClick={() => void recognizeLink()}
           className="shrink-0 rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-60"
         >
           {loading ? "Checking…" : "Recognize link"}
         </button>
-      </form>
+      </div>
 
       {error && (
         <p className="mt-3 text-xs text-rose-600" role="alert">

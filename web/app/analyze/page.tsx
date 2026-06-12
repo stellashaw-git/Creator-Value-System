@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ReportCard } from "@/components/report-card";
 import { AgentThinking } from "@/components/agent-thinking";
 import { PasteLinkPanel, isUrlIntakeEnabled } from "@/components/intake/paste-link-panel";
@@ -11,10 +11,24 @@ import { TrialPaywall } from "@/components/trial-paywall";
 import { TrialUsageHint } from "@/components/trial-usage-hint";
 import { EarlyAccessModal } from "@/components/early-access-modal";
 import { WebhookSyncDevTest } from "@/components/webhook-sync-dev-test";
+import { ResumeAnalysisModal } from "@/components/resume-analysis-modal";
+import type { IntakeRecognized } from "@/components/intake/paste-link-panel";
+import {
+  clearEvaluationSession,
+  draftHasContent,
+  isActiveSession,
+  loadEvaluationDraft,
+  loadLastReport,
+  markActiveSession,
+  saveEvaluationDraft,
+  saveLastReport,
+  type EvaluationDraft,
+  type EvaluationStage,
+} from "@/lib/evaluation-session";
 import { saveEvaluation } from "@/lib/dataset";
 import { syncIntelligenceRecord } from "@/lib/intelligence-sync";
 import { useMounted } from "@/lib/use-mounted";
-import { canRunFreeEvaluation, incrementTrialUsage } from "@/lib/trial";
+import { canRunFreeEvaluation, incrementTrialUsage, FREE_EVALUATION_LIMIT } from "@/lib/trial";
 import type {
   ExtractedSignals,
   ExtractionMeta,
@@ -124,6 +138,12 @@ export default function AnalyzePage() {
   const [usageRefresh, setUsageRefresh] = useState(0);
   const [atLimit, setAtLimit] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  const [profileUrl, setProfileUrl] = useState("");
+  const [intakeRecognized, setIntakeRecognized] = useState<IntakeRecognized | null>(null);
+  const [persistenceReady, setPersistenceReady] = useState(false);
+  const [showResumeModal, setShowResumeModal] = useState(false);
+  const [resumeCreatorLabel, setResumeCreatorLabel] = useState("");
+  const demoAppliedRef = useRef(false);
   const mounted = useMounted();
 
   const [name, setName] = useState("");
@@ -194,15 +214,164 @@ export default function AnalyzePage() {
     setFieldErrors((prev) => ({ ...prev, [key]: "Enter a valid value" }));
   };
 
+  const startFreshForm = useCallback(() => {
+    setName("");
+    setCreatorHandle(undefined);
+    setDisplayName(undefined);
+    setPlatform("Instagram");
+    setNiche("Beauty");
+    setFollowers("");
+    setAvgViews("");
+    setAverageLikes("");
+    setAverageComments("");
+    setAverageReposts("");
+    setAverageShares("");
+    setAverageSaves("");
+    setFollowers30DaysAgo("");
+    setScreenshotTypesUploaded([]);
+    setScreenshotTypesDetected([]);
+    setRecentPostMetrics([]);
+    setRecentPostCount(0);
+    setDetectedPlatform(undefined);
+    setPlatformConfidence(undefined);
+    setPlatformOverride(undefined);
+    setPlatformFromScreenshots(false);
+    setProfileDetailsNote(null);
+    setBrandCategory("");
+    setCampaignGoal("");
+    setComments("");
+    setProfileUrl("");
+    setIntakeRecognized(null);
+    setManualOpen(false);
+    setFieldErrors({});
+    setError(null);
+  }, []);
+
+  const applyDraft = useCallback((draft: EvaluationDraft) => {
+    setProfileUrl(draft.profileUrl);
+    setIntakeRecognized(draft.intakeRecognized);
+    setName(draft.name);
+    setCreatorHandle(draft.creatorHandle);
+    setDisplayName(draft.displayName);
+    setPlatform(draft.platform);
+    setNiche(draft.niche);
+    setFollowers(draft.followers);
+    setAvgViews(draft.avgViews);
+    setAverageLikes(draft.averageLikes);
+    setAverageComments(draft.averageComments);
+    setAverageReposts(draft.averageReposts);
+    setAverageShares(draft.averageShares);
+    setAverageSaves(draft.averageSaves);
+    setFollowers30DaysAgo(draft.followers30DaysAgo);
+    setScreenshotTypesUploaded(draft.screenshotTypesUploaded);
+    setScreenshotTypesDetected(draft.screenshotTypesDetected);
+    setRecentPostMetrics(draft.recentPostMetrics);
+    setRecentPostCount(draft.recentPostCount);
+    setDetectedPlatform(draft.detectedPlatform);
+    setPlatformConfidence(draft.platformConfidence);
+    setPlatformOverride(draft.platformOverride);
+    setPlatformFromScreenshots(draft.platformFromScreenshots);
+    setProfileDetailsNote(draft.profileDetailsNote);
+    setBrandCategory(draft.brandCategory);
+    setCampaignGoal(draft.campaignGoal);
+    setComments(draft.comments);
+    setManualOpen(draft.manualOpen);
+    setSavedId(draft.savedId);
+  }, []);
+
+  const buildDraftSnapshot = useCallback(
+    (overrides?: Partial<Pick<EvaluationDraft, "lastStage" | "savedId">>) => ({
+      profileUrl,
+      intakeRecognized,
+      lastStage: (overrides?.lastStage ??
+        (stage === "result" ? "result" : "form")) as EvaluationStage,
+      savedId: overrides?.savedId !== undefined ? overrides.savedId : savedId,
+      name,
+      creatorHandle,
+      displayName,
+      platform,
+      niche,
+      followers,
+      avgViews,
+      averageLikes,
+      averageComments,
+      averageReposts,
+      averageShares,
+      averageSaves,
+      followers30DaysAgo,
+      screenshotTypesUploaded,
+      screenshotTypesDetected,
+      recentPostMetrics,
+      recentPostCount,
+      detectedPlatform,
+      platformConfidence,
+      platformOverride,
+      platformFromScreenshots,
+      profileDetailsNote,
+      brandCategory,
+      campaignGoal,
+      comments,
+      manualOpen,
+    }),
+    [
+      profileUrl,
+      intakeRecognized,
+      stage,
+      savedId,
+      name,
+      creatorHandle,
+      displayName,
+      platform,
+      niche,
+      followers,
+      avgViews,
+      averageLikes,
+      averageComments,
+      averageReposts,
+      averageShares,
+      averageSaves,
+      followers30DaysAgo,
+      screenshotTypesUploaded,
+      screenshotTypesDetected,
+      recentPostMetrics,
+      recentPostCount,
+      detectedPlatform,
+      platformConfidence,
+      platformOverride,
+      platformFromScreenshots,
+      profileDetailsNote,
+      brandCategory,
+      campaignGoal,
+      comments,
+      manualOpen,
+    ]
+  );
+
+  const restoreSession = useCallback(
+    (draft: EvaluationDraft, openReport: boolean) => {
+      applyDraft(draft);
+      const stored = loadLastReport();
+      if (stored) {
+        setReport(stored.report);
+        setSavedId(stored.savedId);
+      }
+      const showResult = openReport && draft.lastStage === "result" && stored;
+      setStage(showResult ? "result" : "form");
+      markActiveSession(draft.updatedAt);
+    },
+    [applyDraft]
+  );
+
   useEffect(() => {
     if (!mounted) return;
     setAtLimit(!canRunFreeEvaluation());
   }, [usageRefresh, mounted]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || !mounted || demoAppliedRef.current) return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("demo") === "1") {
+      demoAppliedRef.current = true;
       setName(DEMO.name);
       setPlatform(DEMO.platform);
       setNiche(DEMO.niche);
@@ -218,8 +387,45 @@ export default function AnalyzePage() {
       setComments(DEMO.comments.join("\n"));
       setFieldErrors({});
       setManualOpen(true);
+      setPersistenceReady(true);
+      return;
     }
-  }, []);
+
+    const draft = loadEvaluationDraft();
+    const stored = loadLastReport();
+
+    if (draft && draftHasContent(draft)) {
+      if (isActiveSession(draft.updatedAt)) {
+        restoreSession(draft, true);
+        setPersistenceReady(true);
+        return;
+      }
+      setResumeCreatorLabel(
+        draft.name.trim()
+          ? `${draft.name} · ${draft.platform}`
+          : draft.profileUrl.trim() || "Saved creator analysis"
+      );
+      setShowResumeModal(true);
+      setPersistenceReady(false);
+      return;
+    }
+
+    if (stored) {
+      setReport(stored.report);
+      setSavedId(stored.savedId);
+    }
+    setPersistenceReady(true);
+  }, [mounted, restoreSession]);
+
+  useEffect(() => {
+    if (!persistenceReady) return;
+    const timer = window.setTimeout(() => {
+      saveEvaluationDraft(buildDraftSnapshot());
+      const saved = loadEvaluationDraft();
+      if (saved) markActiveSession(saved.updatedAt);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [persistenceReady, buildDraftSnapshot]);
 
   /**
    * Pre-fill the form from a screenshot extraction. We do NOT auto-submit —
@@ -317,7 +523,9 @@ export default function AnalyzePage() {
     setFieldErrors({});
     setError(null);
     if (!canRunFreeEvaluation()) {
-      return setError("You've used your free evaluations. Join early access to continue.");
+      return setError(
+        `You've used your ${FREE_EVALUATION_LIMIT} free evaluations for today. Join early access to continue.`
+      );
     }
     if (!name.trim()) return setError("Creator name is required.");
 
@@ -406,6 +614,7 @@ export default function AnalyzePage() {
     }
 
     setStage("loading");
+    saveEvaluationDraft(buildDraftSnapshot({ lastStage: "form" }));
 
     const body: AnalyzeInput = {
       name: name.trim(),
@@ -462,18 +671,61 @@ export default function AnalyzePage() {
       setUsageRefresh((k) => k + 1);
       setSavedId(saved.id);
       setStage("result");
+      saveLastReport(json.report, saved.id);
+      saveEvaluationDraft(
+        buildDraftSnapshot({ lastStage: "result", savedId: saved.id })
+      );
+      const persisted = loadEvaluationDraft();
+      if (persisted) markActiveSession(persisted.updatedAt);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setStage("form");
     }
   };
 
-  const reset = () => {
+  const goToForm = () => {
     setStage("form");
+    setFieldErrors({});
+    saveEvaluationDraft(buildDraftSnapshot({ lastStage: "form" }));
+  };
+
+  const viewReport = () => {
+    if (report) {
+      setStage("result");
+      return;
+    }
+    const stored = loadLastReport();
+    if (stored) {
+      setReport(stored.report);
+      setSavedId(stored.savedId);
+      setStage("result");
+    }
+  };
+
+  const startNew = () => {
+    clearEvaluationSession();
+    startFreshForm();
     setReport(null);
     setSavedId(null);
-    setFieldErrors({});
+    setStage("form");
+    setPersistenceReady(true);
   };
+
+  const handleResumeAnalysis = () => {
+    const draft = loadEvaluationDraft();
+    if (draft) {
+      restoreSession(draft, true);
+    }
+    setShowResumeModal(false);
+    setPersistenceReady(true);
+  };
+
+  const handleStartNewFromModal = () => {
+    startNew();
+    setShowResumeModal(false);
+  };
+
+  const hasCachedReport = Boolean(report || loadLastReport());
 
   return (
     <main className="min-h-screen">
@@ -499,9 +751,20 @@ export default function AnalyzePage() {
             </nav>
           </div>
           {stage === "form" && (
-            <Link href="/analyze?demo=1" className="text-xs font-semibold text-neutral-500 hover:text-neutral-900">
-              Try sample creator →
-            </Link>
+            <div className="flex items-center gap-3">
+              {hasCachedReport && (
+                <button
+                  type="button"
+                  onClick={viewReport}
+                  className="text-xs font-semibold text-emerald-700 hover:text-emerald-900"
+                >
+                  View last report →
+                </button>
+              )}
+              <Link href="/analyze?demo=1" className="text-xs font-semibold text-neutral-500 hover:text-neutral-900">
+                Try sample creator →
+              </Link>
+            </div>
           )}
         </div>
       </header>
@@ -525,6 +788,8 @@ export default function AnalyzePage() {
               brandCategory, setBrandCategory,
               campaignGoal, setCampaignGoal,
               comments, setComments,
+              profileUrl, setProfileUrl,
+              intakeRecognized, setIntakeRecognized,
               fieldErrors,
               onNumericBlur: handleNumericBlur,
               onNumericFocus: clearFieldError,
@@ -551,10 +816,22 @@ export default function AnalyzePage() {
           </div>
         )}
         {stage === "result" && report && (
-          <ReportCard report={report} onRestart={reset} savedId={savedId ?? undefined} />
+          <ReportCard
+            report={report}
+            onEditInputs={goToForm}
+            onStartNew={startNew}
+            savedId={savedId ?? undefined}
+          />
         )}
         {process.env.NODE_ENV === "development" && <WebhookSyncDevTest />}
       </div>
+      {showResumeModal && (
+        <ResumeAnalysisModal
+          creatorLabel={resumeCreatorLabel}
+          onResume={handleResumeAnalysis}
+          onStartNew={handleStartNewFromModal}
+        />
+      )}
       <EarlyAccessModal
         refreshKey={usageRefresh}
         onSubmitted={() => setUsageRefresh((k) => k + 1)}
@@ -594,6 +871,10 @@ interface FormProps {
   setCampaignGoal: (v: CampaignGoal | "") => void;
   comments: string;
   setComments: (v: string) => void;
+  profileUrl: string;
+  setProfileUrl: (v: string) => void;
+  intakeRecognized: IntakeRecognized | null;
+  setIntakeRecognized: (v: IntakeRecognized | null) => void;
   fieldErrors: Partial<Record<NumField, string>>;
   onNumericBlur: (key: NumField, raw: string) => void;
   onNumericFocus: (key: NumField) => void;
@@ -630,12 +911,16 @@ function FormView(p: FormProps) {
 
       {isUrlIntakeEnabled() && (
         <PasteLinkPanel
+          url={p.profileUrl}
+          onUrlChange={p.setProfileUrl}
+          recognized={p.intakeRecognized}
           onRecognized={({ platform, handle }) => {
+            p.setIntakeRecognized({ platform, handle });
             const hints = intakeProfileToAnalyzeHints(
               mockIntakeProfile(
                 platform,
                 handle,
-                `https://intake.local/${platform}/${handle}`
+                p.profileUrl.trim() || `https://intake.local/${platform}/${handle}`
               )
             );
             if (hints.platform) p.setPlatform(hints.platform);

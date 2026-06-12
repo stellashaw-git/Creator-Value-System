@@ -14,10 +14,12 @@ export function TrialUsageHint({ refreshKey = 0 }: { refreshKey?: number }) {
       return;
     }
     if (used <= 0) {
-      setText(null);
+      setText(`${limit} free evaluations per day`);
       return;
     }
-    setText(`${used} of ${limit} free evaluations used · ${remaining} remaining`);
+    setText(
+      `${used} of ${limit} free evaluations used today · ${remaining} remaining today`
+    );
   }, [refreshKey]);
 
   if (!text) return null;

@@ -9,7 +9,7 @@ import {
   submitEarlyAccess,
   type EarlyAccessRole,
 } from "@/lib/early-access";
-import { getTrialUsage, isDevEvaluationLimitBypassed } from "@/lib/trial";
+import { getTrialUsage, isDevEvaluationLimitBypassed, FREE_EVALUATION_LIMIT } from "@/lib/trial";
 
 export function EarlyAccessModal({
   refreshKey = 0,
@@ -99,7 +99,7 @@ export function EarlyAccessModal({
               id="early-access-title"
               className="text-lg font-semibold tracking-tight text-neutral-900"
             >
-              You&apos;ve used your free evaluations.
+              You&apos;ve used your {FREE_EVALUATION_LIMIT} free evaluations for today.
             </p>
             <p className="mt-2 text-sm leading-relaxed text-neutral-500">
               Join the founding user group for expanded access and early features.
