@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { EvaluationPreview } from "@/components/evaluation-preview";
 
 const PERSONAS = [
   {
@@ -10,7 +9,7 @@ const PERSONAS = [
   {
     tag: "For MCN agencies",
     title: "Match creators to brands with confidence.",
-    body: "Pre-qualify creators with a clear decision and evidence your clients can trust.",
+    body: "Pre-qualify partnership outreach with a clear Final Decision. Defend rate cards with pillar-level evidence, not hunches.",
   },
 ];
 
@@ -22,16 +21,19 @@ const OUTCOMES = [
 
 const FLOW_STEPS = [
   {
+    num: "01",
     title: "Brief the platform",
     body: "Drop in the creator's profile, performance metrics, and a recent comment sample.",
   },
   {
+    num: "02",
     title: "Signals are evaluated",
     body: "Audience intent, engagement quality, monetization gap, brand fit, partnership readiness — all benchmarked against tier baselines.",
   },
   {
-    title: "Get your evaluation",
-    body: "A clear decision, commercial score, campaign fit, and recommended next steps — plus outreach you can send today.",
+    num: "03",
+    title: "Receive a Creator Opportunity Brief",
+    body: "Investor-style memo, a Final Decision with confidence, three outreach drafts, and a next-action plan tuned for campaign execution.",
   },
 ];
 
@@ -78,59 +80,65 @@ export default function LandingPage() {
             </div>
             <nav className="hidden items-center gap-3 text-xs font-semibold text-neutral-500 sm:flex">
               <Link href="/dataset" className="hover:text-neutral-900">
-                Saved
-              </Link>
-              <Link href="/compare" className="hover:text-neutral-900">
-                Compare
-              </Link>
-              <Link href="/waitlist" className="text-neutral-400 hover:text-neutral-900">
-                Early access
+                Dataset
               </Link>
             </nav>
           </div>
           <Link href="/analyze" className="btn-primary !py-1.5 !px-4">
-            Analyze Your Own Creator
+            Evaluate a Creator
           </Link>
         </div>
       </header>
 
-      {/* Hero — identity + value only; workflow lives on /analyze */}
-      <section className="mx-auto max-w-6xl px-6 pt-24 pb-28 sm:min-h-[calc(100vh-4.5rem)] sm:flex sm:flex-col sm:justify-center sm:pt-32 sm:pb-36">
-        <h1 className="text-3xl font-extrabold tracking-tight text-neutral-900 sm:text-4xl">
-          WorthyIQ
-        </h1>
-        <p className="mt-5 max-w-3xl text-4xl font-extrabold leading-[1.08] tracking-tight text-neutral-900 sm:text-5xl lg:text-6xl">
-          An AI-driven decision platform for{" "}
+      {/* Hero */}
+      <section className="mx-auto max-w-6xl px-6 pt-24 pb-16 sm:pt-32">
+        <div className="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.16em] text-neutral-500">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          </span>
+          Decision system · live demo
+        </div>
+        <h1 className="mt-6 max-w-3xl text-5xl font-extrabold leading-[1.05] tracking-tight sm:text-6xl">
+          The decision system for{" "}
           <span className="text-emerald-600">influencer marketing</span>.
-        </p>
-        <p className="mt-6 max-w-xl text-lg leading-relaxed text-neutral-600">
-          Evaluate creators before you spend on influencer marketing.
+        </h1>
+        <p className="mt-6 max-w-2xl text-lg leading-relaxed text-neutral-700">
+          WorthyIQ helps brands and MCN agencies evaluate creators, improve marketing ROI,
+          and turn creator signals into actionable campaign decisions.
         </p>
         <div className="mt-10 flex flex-wrap gap-3">
-          <Link href="/analyze?demo=1" className="btn-secondary">
-            Try Sample Creator
-          </Link>
           <Link href="/analyze" className="btn-primary">
-            Analyze Your Own Creator →
+            Evaluate a Creator →
+          </Link>
+          <Link href="/analyze?demo=1" className="btn-secondary">
+            Try a sample creator
           </Link>
         </div>
-        <p className="mt-4 text-xs text-neutral-500">
-          Free creator evaluations during early access
-        </p>
-      </section>
 
-      {/* Value proof + sample output — below hero */}
-      <section className="border-t border-neutral-200/80 bg-white">
-        <div className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-10 px-6 py-14 lg:grid-cols-2 lg:gap-14">
-          <ul className="grid grid-cols-1 gap-5 sm:grid-cols-3 lg:grid-cols-1">
-            {OUTCOMES.map((o, i) => (
-              <li key={i} className="text-sm leading-relaxed text-neutral-600">
-                {o}
-              </li>
-            ))}
-          </ul>
-          <EvaluationPreview />
-        </div>
+        {/* Outcome bullets */}
+        <ul className="mt-10 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {OUTCOMES.map((o, i) => (
+            <li
+              key={i}
+              className="flex items-start gap-3 rounded-xl border border-neutral-200 bg-white p-4"
+            >
+              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200">
+                <svg viewBox="0 0 20 20" className="h-3.5 w-3.5">
+                  <path
+                    d="M5 10.5l3 3 7-7"
+                    stroke="currentColor"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                  />
+                </svg>
+              </span>
+              <span className="text-sm leading-relaxed text-neutral-700">{o}</span>
+            </li>
+          ))}
+        </ul>
       </section>
 
       {/* Personas — primary users */}
@@ -157,31 +165,41 @@ export default function LandingPage() {
               </div>
             ))}
           </div>
+          <p className="mt-6 text-xs text-neutral-500">
+            Also used by creator-economy investors screening operators by commercial signal, not follower count.
+          </p>
         </div>
       </section>
 
-      {/* Capabilities — light, secondary */}
-      <section className="mx-auto max-w-6xl px-6 py-16 sm:py-20">
-        <p className="text-sm font-medium text-neutral-500">What you can do</p>
-        <div className="mt-10 grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-4 lg:gap-10">
+      {/* Capability strip */}
+      <section className="mx-auto max-w-6xl px-6 py-20">
+        <h2 className="text-sm font-bold uppercase tracking-[0.12em] text-neutral-500">
+          What the platform delivers
+        </h2>
+        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
           {CAPABILITIES.map((c) => (
-            <div key={c.label}>
-              <p className="text-base font-semibold text-neutral-900">{c.label}</p>
-              <p className="mt-1.5 text-sm leading-relaxed text-neutral-600">{c.body}</p>
+            <div key={c.label} className="rounded-xl border border-neutral-200 bg-white p-6 shadow-sm">
+              <div className="inline-flex items-center rounded-full border border-neutral-300 bg-white px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-700">
+                {c.label}
+              </div>
+              <p className="mt-3 text-[15px] leading-relaxed text-neutral-800">{c.body}</p>
             </div>
           ))}
         </div>
       </section>
 
-      {/* How it works — minimal, no cards */}
-      <section className="border-t border-neutral-100">
-        <div className="mx-auto max-w-6xl px-6 py-14 sm:py-16">
-          <p className="text-sm font-medium text-neutral-500">How it works</p>
-          <div className="mt-8 flex flex-col gap-8 md:flex-row md:gap-12">
+      {/* Flow */}
+      <section className="border-t border-neutral-200 bg-white">
+        <div className="mx-auto max-w-6xl px-6 py-20">
+          <h2 className="text-sm font-bold uppercase tracking-[0.12em] text-neutral-500">
+            From evaluation to execution
+          </h2>
+          <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-3">
             {FLOW_STEPS.map((s) => (
-              <div key={s.title} className="flex-1 md:max-w-[200px]">
-                <p className="text-base font-semibold text-neutral-900">{s.title}</p>
-                <p className="mt-1 text-sm text-neutral-600">{s.body}</p>
+              <div key={s.num} className="rounded-xl border border-neutral-200 bg-neutral-50/60 p-6">
+                <div className="text-xs font-bold tracking-[0.2em] text-emerald-700">{s.num}</div>
+                <div className="mt-2 text-lg font-bold text-neutral-900">{s.title}</div>
+                <p className="mt-2 text-sm leading-relaxed text-neutral-600">{s.body}</p>
               </div>
             ))}
           </div>
@@ -193,15 +211,18 @@ export default function LandingPage() {
         <div className="mx-auto grid max-w-6xl grid-cols-1 gap-10 px-6 py-20 md:grid-cols-2">
           <div>
             <h2 className="text-sm font-bold uppercase tracking-[0.12em] text-neutral-500">
-              What you get
+              Creator Opportunity Brief
             </h2>
             <h3 className="mt-3 text-3xl font-extrabold tracking-tight text-neutral-900">
-              A clear creator decision your team can act on — not a metrics dump.
+              A campaign-grade brief your marketing team can act on — not a dashboard.
             </h3>
             <p className="mt-4 text-base leading-relaxed text-neutral-700">
-              Every evaluation returns a decision, commercial score, campaign fit, and a
-              recommended next step. Expand for full analysis, risks, and outreach drafts when
-              you need more detail.
+              Every evaluation ends in a structured brief: executive summary, commercial upside,
+              monetization gap, honest risk factors, and the exact partnership shape the platform
+              recommends. Paired with a Final Decision banner that states its
+              <span className="font-semibold text-neutral-900"> confidence</span>, and an expandable
+              <span className="font-semibold text-neutral-900"> Why this decision? </span>
+              reasoning view your team can defend internally.
             </p>
           </div>
           <ul className="space-y-3">
@@ -223,23 +244,67 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Save & compare — customer-facing, not infrastructure narrative */}
-      <section className="border-t border-neutral-200 bg-neutral-50/40">
-        <div className="mx-auto max-w-6xl px-6 py-16">
-          <h2 className="text-2xl font-extrabold tracking-tight text-neutral-900">
-            Save and compare creators
-          </h2>
-          <p className="mt-3 max-w-xl text-sm leading-relaxed text-neutral-600">
-            Evaluations stay on your device so you can shortlist creators and compare decisions
-            before outreach.
-          </p>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Link href="/dataset" className="btn-secondary">
-              View saved creators
-            </Link>
-            <Link href="/compare" className="btn-secondary">
-              Compare creators
-            </Link>
+      {/* Data moat / learning layer */}
+      <section className="border-t border-neutral-200 bg-white">
+        <div className="mx-auto max-w-6xl px-6 py-20">
+          <div className="grid grid-cols-1 gap-10 md:grid-cols-2">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-neutral-700">
+                Decision learning layer
+              </div>
+              <h2 className="mt-4 text-3xl font-extrabold tracking-tight text-neutral-900">
+                The moat is creator signal × campaign outcome data.
+              </h2>
+              <p className="mt-4 text-base leading-relaxed text-neutral-700">
+                Every evaluation is stored as <span className="font-semibold text-neutral-900">structured creator
+                intelligence</span> — inputs, signals, decision, confidence, outreach, and the actions taken.
+                As your team logs real campaign outcomes against those decisions, the dataset compounds into
+                a <span className="font-semibold text-neutral-900">creator signal-to-outcome dataset</span> nobody
+                else has.
+              </p>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <Link href="/dataset" className="btn-secondary">
+                  Open the dataset →
+                </Link>
+                <Link href="/analyze?demo=1" className="text-sm font-semibold text-neutral-700 hover:text-neutral-900">
+                  Or evaluate a sample creator
+                </Link>
+              </div>
+            </div>
+            <ul className="grid grid-cols-1 gap-3">
+              {[
+                {
+                  k: "Inputs",
+                  v: "Profile, metrics, comment sample, brand category — captured per evaluation.",
+                },
+                {
+                  k: "Evaluation",
+                  v: "Commercial Score, pillar scores, Final Decision, stated confidence.",
+                },
+                {
+                  k: "Action",
+                  v: "Outreach drafts and the recommended next-action plan, tied to the decision.",
+                },
+                {
+                  k: "Outcome",
+                  v: "Campaign status, budget, estimated vs. actual ROI, conversion notes.",
+                },
+                {
+                  k: "Feedback loop",
+                  v: "Outcomes flow back into the dataset, sharpening the next decision.",
+                },
+              ].map((row) => (
+                <li
+                  key={row.k}
+                  className="grid grid-cols-[120px_1fr] gap-4 rounded-xl border border-neutral-200 bg-neutral-50/60 px-4 py-3"
+                >
+                  <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-700">
+                    {row.k}
+                  </span>
+                  <span className="text-sm leading-relaxed text-neutral-700">{row.v}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
       </section>
@@ -257,30 +322,23 @@ export default function LandingPage() {
           </div>
           <div className="flex gap-3">
             <Link
-              href="/analyze?demo=1"
-              className="rounded-lg border border-neutral-700 bg-transparent px-5 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800"
-            >
-              Try Sample Creator
-            </Link>
-            <Link
               href="/analyze"
               className="rounded-lg bg-white px-5 py-2.5 text-sm font-semibold text-neutral-900 hover:bg-neutral-100"
             >
-              Analyze Your Own Creator
+              Evaluate a Creator
+            </Link>
+            <Link
+              href="/analyze?demo=1"
+              className="rounded-lg border border-neutral-700 bg-transparent px-5 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800"
+            >
+              Try the sample
             </Link>
           </div>
         </div>
       </section>
 
       <footer className="border-t border-neutral-200 py-8 text-center text-xs text-neutral-500">
-        <p>
-          © {new Date().getFullYear()} WorthyIQ · Creator Intelligence Platform · For brands and MCN agencies
-        </p>
-        <p className="mt-2">
-          <Link href="/waitlist" className="text-neutral-600 hover:text-neutral-900">
-            Get notified when advanced creator comparison launches
-          </Link>
-        </p>
+        © {new Date().getFullYear()} WorthyIQ · Creator Intelligence Platform · For brands and MCN agencies
       </footer>
     </main>
   );
